@@ -2,7 +2,10 @@
 
 An **Ansible Execution Environment (EE)** based on **Red Hat UBI 9** with **ansible-core**, built for running playbooks via **ansible-navigator** (Execution Environment mode) in local workflows and CI.
 
-This image is intentionally minimal: it provides only the tooling required to run Ansible reliably inside a container (plus common utilities like SSH client and rsync).
+This image is intentionally minimal: it provides only the tooling required to run Ansible reliably inside a container (plus common utilities like SSH client and Git).
+
+> **Versioning note:** Image tags follow the repository release tags (e.g. `v1.0.0`) plus `latest`.  
+> The Ansible version is documented separately (currently `ansible-core 2.18.x`).
 
 ---
 
@@ -11,28 +14,21 @@ This image is intentionally minimal: it provides only the tooling required to ru
 - UBI 9 (Python 3.11 base)
 - `ansible-core` **2.18.x**
 - Common CLI utilities required by typical playbooks:
-  - `bash`, `git`, `openssh-clients`, `rsync`, `tar`, `unzip`, `which`, `findutils`, `ca-certificates`
+  - `bash`, `git`, `openssh-clients`, `ca-certificates`
 - Non-root runtime user: `wunder`
 - Writable `HOME` + Ansible temp dirs (prevents `/.ansible` permission issues)
 
 ---
 
-## Build
-
-```bash
-docker build \
-  -t ghcr.io/lightning-it/ee-wunder-ansible-ubi9:v2.18.0 \
-  --build-arg ANSIBLE_CORE_VERSION=2.18.0 \
-  .
-```
-
 ## Test
 
+Use a **release tag** (recommended for reproducibility) or `latest`:
+
 ```bash
-docker run --rm ghcr.io/lightning-it/ee-wunder-ansible-ubi9:v2.18.0 \
+docker run --rm ghcr.io/lightning-it/ee-wunder-ansible-ubi9:v1.0.0 \
   ansible --version
 
-docker run --rm ghcr.io/lightning-it/ee-wunder-ansible-ubi9:v2.18.0 \
+docker run --rm ghcr.io/lightning-it/ee-wunder-ansible-ubi9:v1.0.0 \
   ansible-galaxy --version
 ```
 
@@ -48,7 +44,7 @@ ansible-navigator:
   execution-environment:
     enabled: true
     container-engine: docker
-    image: ghcr.io/lightning-it/ee-wunder-ansible-ubi9:v2.18.0
+    image: ghcr.io/lightning-it/ee-wunder-ansible-ubi9:latest
     pull:
       policy: tag
     environment-variables:

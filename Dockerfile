@@ -15,14 +15,9 @@ USER 0
 RUN microdnf -y update && \
     microdnf -y install \
       bash \
-      git \
+      ca-certificates \
       openssh-clients \
-      rsync \
-      tar \
-      unzip \
-      which \
-      findutils \
-      ca-certificates && \
+      git && \
     microdnf clean all && \
     rm -rf /var/cache/yum
 
