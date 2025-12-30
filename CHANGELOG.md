@@ -1,3 +1,9 @@
+## [1.0.1](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.0.0...v1.0.1) (2025-12-30)
+
+### Bug Fixes
+
+* update Dockerfile and README to remove unnecessary packages ([91a52f0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/91a52f09ae3f7bf7e455d226f2da411e37796cb1))
+
 ## 1.0.0 (2025-12-30)
 
 ### Features
