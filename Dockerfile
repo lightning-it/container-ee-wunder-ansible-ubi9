@@ -12,14 +12,14 @@ USER 0
 ########################
 # Base tools for Ansible
 ########################
-RUN microdnf -y update && \
-    microdnf -y install \
+RUN dnf -y update && \
+    dnf -y install \
       bash \
       ca-certificates \
       openssh-clients \
       git && \
-    microdnf clean all && \
-    rm -rf /var/cache/yum
+    dnf -y clean all && \
+    rm -rf /var/cache/dnf /var/cache/yum
 
 ########################
 # Ansible (core)
