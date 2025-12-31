@@ -4,7 +4,7 @@ An **Ansible Execution Environment (EE)** based on **Red Hat UBI 9** with **ansi
 
 This image is intentionally minimal: it provides only the tooling required to run Ansible reliably inside a container (plus common utilities like SSH client and Git).
 
-> **Versioning note:** Image tags follow the repository release tags (e.g. `v1.0.0`) plus `latest`.  
+> **Versioning note:** Image tags follow the repository release tags (e.g. `v1.0.0`) plus `latest`.
 > The Ansible version is documented separately (currently `ansible-core 2.18.x`).
 
 ---

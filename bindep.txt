@@ -1,0 +1,14 @@
+# common helpers
+sshpass
+tar
+unzip
+
+# kerberos / ad auth
+krb5-workstation
+cyrus-sasl-gssapi
+
+# build deps
+gcc
+python3-devel
+libffi-devel
+openssl-devel

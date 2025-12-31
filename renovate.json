@@ -1,0 +1,55 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:base",
+    ":semanticCommits",
+    ":semanticCommitType(chore)",
+    ":semanticCommitScope(deps)"
+  ],
+  "labels": [
+    "dependencies"
+  ],
+  "prConcurrentLimit": 5,
+  "rebaseWhen": "conflicted",
+  "regexManagers": [
+    {
+      "fileMatch": [
+        "^Dockerfile$",
+        "^Containerfile$"
+      ],
+      "matchStrings": [
+        "ARG\\s+ANSIBLE_CORE_VERSION=(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\\s*\\n"
+      ],
+      "depNameTemplate": "ansible-core",
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "pep440"
+    },
+    {
+      "fileMatch": [
+        "^collections/requirements\\.yml$",
+        "^collections/controller-requirements\\.yml$"
+      ],
+      "matchStrings": [
+        "-\\s+name:\\s+(?<depName>[A-Za-z0-9_]+\\.[A-Za-z0-9_]+)\\s*\\n\\s+version:\\s+\"?(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\"?\\s*\\n"
+      ],
+      "datasourceTemplate": "galaxy-collection",
+      "versioningTemplate": "semver"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchDepNames": [
+        "ansible-core"
+      ],
+      "allowedVersions": "/^2\\.18\\./",
+      "groupName": "ansible-core (2.18.x)"
+    },
+    {
+      "matchDatasources": [
+        "galaxy-collection"
+      ],
+      "groupName": "ansible galaxy collections",
+      "separateMinorPatch": true
+    }
+  ]
+}
