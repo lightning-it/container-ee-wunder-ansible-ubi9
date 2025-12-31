@@ -54,6 +54,8 @@ RUN printf "ansible-core==%s\nansible-runner==%s\n" \
 RUN mkdir -p \
       /runner \
       /runner/project \
+      /runner/project/roles \
+      /runner/roles \
       /runner/inventory \
       /runner/env \
       /runner/.ansible/tmp \
@@ -61,7 +63,7 @@ RUN mkdir -p \
       /usr/share/ansible/collections \
       /usr/share/ansible/roles \
       /usr/share/automation-controller/collections && \
-    chmod 0775 /runner /runner/project /runner/inventory /runner/env && \
+    chmod 0775 /runner /runner/project /runner/project/roles /runner/roles /runner/inventory /runner/env && \
     chmod 1777 /tmp/ansible /tmp/ansible/tmp
 
 ENV HOME=/runner \
