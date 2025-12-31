@@ -1,3 +1,15 @@
+## [1.1.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.0.4...v1.1.0) (2025-12-31)
+
+### Features
+
+* add arm support ([b9931e6](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/b9931e6a0dbd381506e6ddc5dc874f4998d5f737))
+
+## [1.0.4](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.0.3...v1.0.4) (2025-12-31)
+
+### Bug Fixes
+
+* update ANSIBLE_CORE_VERSION to 2.18.12 in Dockerfile ([df0b2ae](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/df0b2ae9e9919718262572192a02195216be3be0))
+
 ## [1.0.3](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.0.2...v1.0.3) (2025-12-31)
 
 ### Bug Fixes
