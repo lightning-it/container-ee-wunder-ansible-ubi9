@@ -1,3 +1,10 @@
+## [1.1.2](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.1.1...v1.1.2) (2025-12-31)
+
+### Bug Fixes
+
+* add missing directories for Ansible roles and adjust permissions ([3b092c8](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/3b092c8746202c1d8b4e5ad4fdd77864332d2e6c))
+* add missing directories for Ansible roles and adjust permissions ([755e7cc](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/755e7ccead8da2ab7187e4123400c440d4766517))
+
 ## [1.1.1](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.1.0...v1.1.1) (2025-12-31)
 
 ### Bug Fixes
