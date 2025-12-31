@@ -1,3 +1,9 @@
+## [1.1.1](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.1.0...v1.1.1) (2025-12-31)
+
+### Bug Fixes
+
+* restructure Dockerfile and add supporting files for Ansible ex… ([86d97fc](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/86d97fccdb5e83bdc323ae182c8fb065c43cfb96))
+
 ## [1.1.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.0.4...v1.1.0) (2025-12-31)
 
 ### Features
