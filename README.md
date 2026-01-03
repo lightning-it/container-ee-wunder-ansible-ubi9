@@ -17,11 +17,11 @@ This image is intentionally minimal and deterministic: it contains only what is 
 
 The repository name is `container-ee-wunder-ansible-ubi9`, but the published image is:
 
-- `ghcr.io/lightning-it/ee-wunder-ansible-ubi9:<tag>`
+- `quay.io/l-it/ee-wunder-ansible-ubi9:<tag>`
 
 Example tags:
-- `ghcr.io/lightning-it/ee-wunder-ansible-ubi9:v1.1.1`
-- `ghcr.io/lightning-it/ee-wunder-ansible-ubi9:latest`
+- `quay.io/l-it/ee-wunder-ansible-ubi9:v1.1.4`
+- `quay.io/l-it/ee-wunder-ansible-ubi9:latest`
 
 This image is published as **multi-arch** (linux/amd64 + linux/arm64).
 
@@ -72,9 +72,9 @@ Environment variables are set to standardize paths:
 ## Quick test (CLI)
 
 ```bash
-docker run --rm ghcr.io/lightning-it/ee-wunder-ansible-ubi9:latest ansible --version
-docker run --rm ghcr.io/lightning-it/ee-wunder-ansible-ubi9:latest ansible-galaxy --version
-docker run --rm ghcr.io/lightning-it/ee-wunder-ansible-ubi9:latest ansible-runner --version
+docker run --rm quay.io/l-it/ee-wunder-ansible-ubi9:latest ansible --version
+docker run --rm quay.io/l-it/ee-wunder-ansible-ubi9:latest ansible-galaxy --version
+docker run --rm quay.io/l-it/ee-wunder-ansible-ubi9:latest ansible-runner --version
 ```
 
 ---
@@ -98,7 +98,7 @@ localhost ansible_connection=local ansible_python_interpreter=/opt/app-root/bin/
 TXT
 
 docker run --rm -v /tmp/ee-test:/runner \
-  ghcr.io/lightning-it/ee-wunder-ansible-ubi9:latest \
+  quay.io/l-it/ee-wunder-ansible-ubi9:latest \
   bash -lc 'ansible-runner run /runner --playbook ping.yml --inventory /runner/inventory/hosts'
 ```
 
@@ -119,7 +119,7 @@ chmod +x scripts/test-ee.sh
 ./scripts/test-ee.sh
 
 # test a specific release tag
-./scripts/test-ee.sh ghcr.io/lightning-it/ee-wunder-ansible-ubi9:v1.1.1
+./scripts/test-ee.sh quay.io/l-it/ee-wunder-ansible-ubi9:v1.1.4
 
 # test a locally built image
 ./scripts/test-ee.sh ee-wunder-ansible-ubi9:local
@@ -137,7 +137,7 @@ ansible-navigator:
   execution-environment:
     enabled: true
     container-engine: docker
-    image: ghcr.io/lightning-it/ee-wunder-ansible-ubi9:latest
+    image: quay.io/l-it/ee-wunder-ansible-ubi9:latest
     pull:
       policy: tag
     environment-variables:

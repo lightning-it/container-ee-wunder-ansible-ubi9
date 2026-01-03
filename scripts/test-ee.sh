@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE="${1:-ghcr.io/lightning-it/ee-wunder-ansible-ubi9:latest}"
+IMAGE="${1:-quay.io/l-it/ee-wunder-ansible-ubi9:latest}"
 
 echo "==> Testing EE image: ${IMAGE}"
 echo
