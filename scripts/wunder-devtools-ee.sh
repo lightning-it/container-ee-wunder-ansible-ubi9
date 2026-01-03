@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE="${WUNDER_DEVTOOLS_EE_IMAGE:-quay.io/l-it/wunder-devtools-ee:v1.1.7}"
+IMAGE="${WUNDER_DEVTOOLS_EE_IMAGE:-quay.io/l-it/wunder-devtools-ee:v1.1.5}"
 CONTAINER_HOME="${CONTAINER_HOME:-/tmp/wunder}"
 HOST_HOME_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/wunder-devtools-ee/home"
 
