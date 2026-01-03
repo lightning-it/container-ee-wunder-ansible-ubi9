@@ -119,7 +119,7 @@ chmod +x scripts/test-ee.sh
 ./scripts/test-ee.sh
 
 # test a specific release tag
-./scripts/test-ee.sh quay.io/l-it/ee-wunder-ansible-ubi9:v1.1.4
+./scripts/test-ee.sh quay.io/l-it/ee-wunder-ansible-ubi9:latest
 
 # test a locally built image
 ./scripts/test-ee.sh ee-wunder-ansible-ubi9:local
