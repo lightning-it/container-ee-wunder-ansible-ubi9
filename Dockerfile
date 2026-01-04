@@ -5,13 +5,10 @@ LABEL org.opencontainers.image.title="ee-wunder-ansible-ubi9"
 LABEL org.opencontainers.image.description="Ansible Execution Environment (UBI 9) for Wunder automation (AAP + ansible-navigator)."
 LABEL org.opencontainers.image.source="https://github.com/lightning-it/container-ee-wunder-ansible-ubi9"
 
-ARG ANSIBLE_CORE_VERSION=2.18.12
-ARG ANSIBLE_RUNNER_VERSION=2.4.0
 ARG ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=
 ARG PKGMGR_OPTS="--nodocs --setopt=install_weak_deps=0 --setopt=*.module_hotfixes=1"
 
 USER 0
-
 # DL4006: ensure pipefail is enabled before any RUN that uses pipes
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -35,17 +32,18 @@ RUN set -euo pipefail; \
     rm -f /build/bindep.txt
 
 ########################
-# Ansible (core) + runner (pinned via requirements file)
+# Python deps via requirements.txt
 ########################
 ARG PIP_TIMEOUT=120
 ARG PIP_RETRIES=5
 
-RUN printf "ansible-core==%s\nansible-runner==%s\n" \
-      "${ANSIBLE_CORE_VERSION}" "${ANSIBLE_RUNNER_VERSION}" > /tmp/requirements.txt && \
+COPY requirements.txt /build/requirements.txt
+
+RUN python -m pip install --no-cache-dir --upgrade pip && \
     python -m pip install --no-cache-dir \
       --timeout "${PIP_TIMEOUT}" --retries "${PIP_RETRIES}" \
-      --requirement /tmp/requirements.txt && \
-    rm -f /tmp/requirements.txt && \
+      -r /build/requirements.txt && \
+    rm -f /build/requirements.txt && \
     ansible --version && ansible-galaxy --version && ansible-runner --version
 
 ########################
