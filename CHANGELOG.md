@@ -1,3 +1,9 @@
+## [1.2.1](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.2.0...v1.2.1) (2026-01-04)
+
+### Bug Fixes
+
+* update dependency urllib3 to v2.6.0 [security] ([#29](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/29)) ([6a4fdb4](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/6a4fdb432fc12cfc6b48df0e87aae70e50344df4))
+
 ## [1.2.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.1.5...v1.2.0) (2026-01-04)
 
 ### Features
