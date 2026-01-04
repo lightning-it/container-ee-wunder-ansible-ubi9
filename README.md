@@ -35,6 +35,7 @@ This image is published as **multi-arch** (linux/amd64 + linux/arm64).
 ### Python tooling
 - `ansible-core` **2.18.x** (pinned)
 - `ansible-runner` **2.x** (pinned)
+- `hvac` (HashiCorp Vault Python client) pinned for `community.hashi_vault` lookups
 
 ### OS dependencies
 - Installed from `bindep.txt` (RPM allow-list).  

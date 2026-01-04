@@ -1,0 +1,41 @@
+# ---------------------------------------------------------------------------
+# ee-wunder-ansible-ubi9 – Best-practice Python requirements
+# Target: Ansible Execution Environment for AAP + ansible-navigator
+# Policy: pinned core, safe-minimum extras, VMware + optional Vault.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Core runtime (pin to 2.18.x series)
+# ---------------------------------------------------------------------------
+ansible-core==2.18.12
+ansible-runner==2.4.0
+
+# ---------------------------------------------------------------------------
+# Optional: Hashi Vault client (only used if vault lookups are enabled)
+# ---------------------------------------------------------------------------
+hvac==2.3.0
+
+# ---------------------------------------------------------------------------
+# VMware Python SDK required by community.vmware modules
+# (pyVim import comes from pyvmomi)
+# ---------------------------------------------------------------------------
+pyvmomi==8.0.3.0.1
+
+# ---------------------------------------------------------------------------
+# HTTP/TLS stack (helps avoid runtime surprises in minimal images)
+# - requests/urllib3: API calls (vCenter, REST endpoints, etc.)
+# - cryptography: TLS / cert-related functionality used by many deps
+# - certifi: CA bundle consistency in containers
+# ---------------------------------------------------------------------------
+requests==2.32.3
+urllib3==2.2.3
+cryptography==46.0.3
+certifi==2025.1.31
+
+# ---------------------------------------------------------------------------
+# Common parsing utilities used widely by Ansible plugins/collections
+# (often already pulled indirectly, but pinning avoids drift)
+# ---------------------------------------------------------------------------
+PyYAML==6.0.3
+jmespath==1.0.1
+packaging==25.0
