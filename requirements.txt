@@ -28,7 +28,7 @@ pyvmomi==8.0.3.0.1
 # - certifi: CA bundle consistency in containers
 # ---------------------------------------------------------------------------
 requests==2.32.4
-urllib3==2.2.3
+urllib3==2.6.0
 cryptography==46.0.3
 certifi==2025.1.31
 
