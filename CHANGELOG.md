@@ -1,3 +1,9 @@
+## [1.2.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.1.5...v1.2.0) (2026-01-04)
+
+### Features
+
+* add hvac client for HashiCorp Vault lookups in Dockerfile and README ([#27](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/27)) ([d2135f3](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/d2135f31ed9f0e97391a672907d3af7cfa5b3143))
+
 ## [1.1.5](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.1.4...v1.1.5) (2026-01-03)
 
 ### Bug Fixes
