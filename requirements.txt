@@ -8,7 +8,7 @@
 # Core runtime (pin to 2.18.x series)
 # ---------------------------------------------------------------------------
 ansible-core==2.18.12
-ansible-runner==2.4.0
+ansible-runner==2.4.2
 
 # ---------------------------------------------------------------------------
 # Optional: Hashi Vault client (only used if vault lookups are enabled)
