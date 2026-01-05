@@ -27,7 +27,7 @@ pyvmomi==8.0.3.0.1
 # - cryptography: TLS / cert-related functionality used by many deps
 # - certifi: CA bundle consistency in containers
 # ---------------------------------------------------------------------------
-requests==2.32.4
+requests==2.32.5
 urllib3==2.6.0
 cryptography==46.0.3
 certifi==2025.1.31
