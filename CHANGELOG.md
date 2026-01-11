@@ -1,3 +1,9 @@
+## [1.3.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.2.1...v1.3.0) (2026-01-11)
+
+### Features
+
+* nss wrapper added ([#36](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/36)) ([5b524e3](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/5b524e38df9dfa0cb83691437719b86503417b47))
+
 ## [1.2.1](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.2.0...v1.2.1) (2026-01-04)
 
 ### Bug Fixes
