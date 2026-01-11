@@ -44,10 +44,11 @@ RUN set -euo pipefail; \
 ########################
 ARG PIP_TIMEOUT=120
 ARG PIP_RETRIES=5
+ARG PIP_VERSION=24.3.1
 
 COPY requirements.txt /build/requirements.txt
 
-RUN python -m pip install --no-cache-dir --upgrade pip && \
+RUN python -m pip install --no-cache-dir --upgrade "pip==${PIP_VERSION}" && \
     python -m pip install --no-cache-dir \
       --timeout "${PIP_TIMEOUT}" --retries "${PIP_RETRIES}" \
       -r /build/requirements.txt && \
