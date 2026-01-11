@@ -13,7 +13,7 @@ ansible-runner==2.4.2
 # ---------------------------------------------------------------------------
 # Optional: Hashi Vault client (only used if vault lookups are enabled)
 # ---------------------------------------------------------------------------
-hvac==2.3.0
+hvac==2.4.0
 
 # ---------------------------------------------------------------------------
 # VMware Python SDK required by community.vmware modules
