@@ -38,7 +38,7 @@ This image is published as **multi-arch** (linux/amd64 + linux/arm64).
 - `hvac` (HashiCorp Vault Python client) pinned for `community.hashi_vault` lookups
 
 ### OS dependencies
-- Installed from `bindep.txt` (RPM allow-list).  
+- Installed from `bindep.txt` (RPM allow-list).
   This keeps OS dependencies explicit and reviewable.
 
 ### Ansible content

@@ -32,14 +32,23 @@ RUN set -euo pipefail; \
     rm -f /build/bindep.txt
 
 ########################
+# NSS wrapper (fix host UID != image user, e.g. macOS uid 501)
+########################
+RUN set -euo pipefail; \
+    dnf -y install ${PKGMGR_OPTS} nss_wrapper; \
+    dnf -y clean all; \
+    rm -rf /var/cache/dnf /var/cache/yum
+
+########################
 # Python deps via requirements.txt
 ########################
 ARG PIP_TIMEOUT=120
 ARG PIP_RETRIES=5
+ARG PIP_VERSION=24.3.1
 
 COPY requirements.txt /build/requirements.txt
 
-RUN python -m pip install --no-cache-dir --upgrade pip && \
+RUN python -m pip install --no-cache-dir --upgrade "pip==${PIP_VERSION}" && \
     python -m pip install --no-cache-dir \
       --timeout "${PIP_TIMEOUT}" --retries "${PIP_RETRIES}" \
       -r /build/requirements.txt && \
@@ -107,6 +116,44 @@ RUN set -euo pipefail; \
     fi
 
 ########################
+# EntryPoint: create passwd/group for arbitrary UID (e.g. 501) via nss_wrapper
+########################
+RUN cat > /usr/local/bin/ee-entrypoint <<'EOF' && chmod 0755 /usr/local/bin/ee-entrypoint
+#!/usr/bin/env bash
+set -euo pipefail
+
+# If no command is provided, fall back to bash
+if [ "$#" -eq 0 ]; then
+  set -- /bin/bash
+fi
+
+# If current UID has no passwd entry, ansible/ssh may fail ("No user exists for uid ...").
+# Use nss_wrapper to provide a synthetic passwd/group entry in /tmp.
+if ! whoami >/dev/null 2>&1; then
+  uid="$(id -u)"
+  gid="$(id -g)"
+  home="${HOME:-/tmp}"
+
+  export NSS_WRAPPER_PASSWD="${TMPDIR:-/tmp}/passwd.nss_wrapper"
+  export NSS_WRAPPER_GROUP="${TMPDIR:-/tmp}/group.nss_wrapper"
+
+  # Seed from existing files if readable; then append current uid/gid.
+  (cat /etc/passwd 2>/dev/null || true) > "${NSS_WRAPPER_PASSWD}"
+  echo "eeuser:x:${uid}:${gid}:EE User:${home}:/bin/bash" >> "${NSS_WRAPPER_PASSWD}"
+
+  (cat /etc/group 2>/dev/null || true) > "${NSS_WRAPPER_GROUP}"
+  echo "eegroup:x:${gid}:" >> "${NSS_WRAPPER_GROUP}"
+
+  wrapper="/usr/lib64/libnss_wrapper.so"
+  if [ -f "${wrapper}" ]; then
+    export LD_PRELOAD="${wrapper}${LD_PRELOAD:+:${LD_PRELOAD}}"
+  fi
+fi
+
+exec "$@"
+EOF
+
+########################
 # Runtime user
 ########################
 RUN useradd -u 1000 -m -d /runner runner && \
@@ -115,4 +162,5 @@ RUN useradd -u 1000 -m -d /runner runner && \
 USER runner
 WORKDIR /runner
 
+ENTRYPOINT ["/usr/local/bin/ee-entrypoint"]
 CMD ["/bin/bash"]
