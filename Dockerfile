@@ -75,7 +75,7 @@ import os
 import urllib.request
 
 url = os.environ["TF_URL"]
-    out_path = "/tmp/terraform.zip"
+out_path = "/tmp/terraform.zip"
 with urllib.request.urlopen(url) as resp, open(out_path, "wb") as handle:
     handle.write(resp.read())
 PY
