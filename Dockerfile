@@ -58,7 +58,7 @@ RUN python -m pip install --no-cache-dir --upgrade "pip==${PIP_VERSION}" && \
 ########################
 # Terragrunt
 ########################
-ARG TERRAGRUNT_VERSION=0.65.4
+ARG TERRAGRUNT_VERSION=0.97.2
 RUN set -euo pipefail; \
     arch="$(uname -m)"; \
     case "${arch}" in \
