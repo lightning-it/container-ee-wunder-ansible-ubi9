@@ -19,7 +19,7 @@ hvac==2.4.0
 # VMware Python SDK required by community.vmware modules
 # (pyVim import comes from pyvmomi)
 # ---------------------------------------------------------------------------
-pyvmomi==8.0.3.0.1
+pyvmomi==9.0.0.0
 
 # ---------------------------------------------------------------------------
 # HTTP/TLS stack (helps avoid runtime surprises in minimal images)
