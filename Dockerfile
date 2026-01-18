@@ -12,9 +12,9 @@ USER 0
 # DL4006: ensure pipefail is enabled before any RUN that uses pipes
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-########################
+################################################################################
 # RPMs via bindep
-########################
+################################################################################
 COPY bindep.txt /build/bindep.txt
 
 # hadolint ignore=SC2086
@@ -31,17 +31,17 @@ RUN set -euo pipefail; \
     rm -rf /var/cache/dnf /var/cache/yum; \
     rm -f /build/bindep.txt
 
-########################
+################################################################################
 # NSS wrapper (fix host UID != image user, e.g. macOS uid 501)
-########################
+################################################################################
 RUN set -euo pipefail; \
     dnf -y install ${PKGMGR_OPTS} nss_wrapper; \
     dnf -y clean all; \
     rm -rf /var/cache/dnf /var/cache/yum
 
-########################
+################################################################################
 # Python deps via requirements.txt
-########################
+################################################################################
 ARG PIP_TIMEOUT=120
 ARG PIP_RETRIES=5
 ARG PIP_VERSION=24.3.1
@@ -55,9 +55,9 @@ RUN python -m pip install --no-cache-dir --upgrade "pip==${PIP_VERSION}" && \
     rm -f /build/requirements.txt && \
     ansible --version && ansible-galaxy --version && ansible-runner --version
 
-########################
+################################################################################
 # Terraform
-########################
+################################################################################
 ARG TERRAFORM_VERSION=1.14.3
 RUN set -euo pipefail; \
     arch="$(uname -m)"; \
@@ -80,9 +80,9 @@ with urllib.request.urlopen(url) as resp, open(out_path, "wb") as handle:
     handle.write(resp.read())
 PY
 
-########################
+################################################################################
 # Terragrunt
-########################
+################################################################################
 ARG TERRAGRUNT_VERSION=0.97.2
 RUN set -euo pipefail; \
     arch="$(uname -m)"; \
@@ -104,9 +104,9 @@ with urllib.request.urlopen(url) as resp, open(out_path, "wb") as handle:
     handle.write(resp.read())
 PY
 
-########################
+################################################################################
 # EE layout (AAP/Controller uses /runner)
-########################
+################################################################################
 RUN mkdir -p \
       /runner \
       /runner/project \
@@ -128,9 +128,9 @@ ENV HOME=/runner \
     ANSIBLE_COLLECTIONS_PATH=/usr/share/ansible/collections:/usr/share/automation-controller/collections:/runner/project/collections:/runner/collections \
     ANSIBLE_ROLES_PATH=/usr/share/ansible/roles:/runner/project/roles:/runner/roles
 
-########################
+################################################################################
 # Install collections/roles from repo requirements
-########################
+################################################################################
 WORKDIR /build
 
 # --- Collections (standard) ---
@@ -164,9 +164,9 @@ RUN set -euo pipefail; \
       echo "No controller collections to install (collections/controller-requirements.yml empty or no valid entries). Skipping."; \
     fi
 
-########################
+################################################################################
 # EntryPoint: create passwd/group for arbitrary UID (e.g. 501) via nss_wrapper
-########################
+################################################################################
 RUN cat > /usr/local/bin/ee-entrypoint <<'EOF' && chmod 0755 /usr/local/bin/ee-entrypoint
 #!/usr/bin/env bash
 set -euo pipefail
@@ -202,9 +202,9 @@ fi
 exec "$@"
 EOF
 
-########################
+################################################################################
 # Runtime user
-########################
+################################################################################
 RUN useradd -u 1000 -m -d /runner runner && \
     chown -R runner:runner /runner /tmp/ansible /usr/share/ansible /usr/share/automation-controller
 
