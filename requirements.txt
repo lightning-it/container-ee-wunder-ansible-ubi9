@@ -19,7 +19,7 @@ hvac==2.4.0
 # VMware Python SDK required by community.vmware modules
 # (pyVim import comes from pyvmomi)
 # ---------------------------------------------------------------------------
-pyvmomi==8.0.3.0.1
+pyvmomi==9.0.0.0
 
 # ---------------------------------------------------------------------------
 # HTTP/TLS stack (helps avoid runtime surprises in minimal images)
@@ -30,7 +30,7 @@ pyvmomi==8.0.3.0.1
 requests==2.32.5
 urllib3==2.6.3
 cryptography==46.0.3
-certifi==2025.11.12
+certifi==2026.1.4
 
 # ---------------------------------------------------------------------------
 # Common parsing utilities used widely by Ansible plugins/collections
