@@ -1,3 +1,9 @@
+## [1.6.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.5.0...v1.6.0) (2026-01-18)
+
+### Features
+
+* standardize comment formatting in Dockerfile ([#48](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/48)) ([f6698c8](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/f6698c82929eaba7e329f539abbfb2609ba7c5fd))
+
 ## [1.5.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.4.0...v1.5.0) (2026-01-18)
 
 ### Features
