@@ -1,3 +1,9 @@
+## [1.4.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.3.1...v1.4.0) (2026-01-18)
+
+### Features
+
+* add Terragrunt installation to Dockerfile ([#45](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/45)) ([5946153](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/5946153f3f7c105354a74d0d4e131ea8c580af1b))
+
 ## [1.3.1](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.3.0...v1.3.1) (2026-01-11)
 
 ### Bug Fixes
