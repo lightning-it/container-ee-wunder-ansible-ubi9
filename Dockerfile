@@ -56,6 +56,30 @@ RUN python -m pip install --no-cache-dir --upgrade "pip==${PIP_VERSION}" && \
     ansible --version && ansible-galaxy --version && ansible-runner --version
 
 ########################
+# Terragrunt
+########################
+ARG TERRAGRUNT_VERSION=0.65.4
+RUN set -euo pipefail; \
+    arch="$(uname -m)"; \
+    case "${arch}" in \
+      x86_64) tg_arch="amd64" ;; \
+      aarch64|arm64) tg_arch="arm64" ;; \
+      *) echo "Unsupported arch: ${arch}" >&2; exit 1 ;; \
+    esac; \
+    tg_url="https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/terragrunt_linux_${tg_arch}"; \
+    TG_URL="${tg_url}" python - <<'PY' && \
+    chmod 0755 /usr/local/bin/terragrunt && \
+    /usr/local/bin/terragrunt --version
+import os
+import urllib.request
+
+url = os.environ["TG_URL"]
+out_path = "/usr/local/bin/terragrunt"
+with urllib.request.urlopen(url) as resp, open(out_path, "wb") as handle:
+    handle.write(resp.read())
+PY
+
+########################
 # EE layout (AAP/Controller uses /runner)
 ########################
 RUN mkdir -p \
