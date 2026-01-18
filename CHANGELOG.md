@@ -1,3 +1,9 @@
+## [1.5.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.4.0...v1.5.0) (2026-01-18)
+
+### Features
+
+* terragrunt added ([#46](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/46)) ([a8fa813](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/a8fa813683c4f9fa453cb7faa566188b3c67a146))
+
 ## [1.4.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.3.1...v1.4.0) (2026-01-18)
 
 ### Features
