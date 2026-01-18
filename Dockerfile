@@ -56,6 +56,31 @@ RUN python -m pip install --no-cache-dir --upgrade "pip==${PIP_VERSION}" && \
     ansible --version && ansible-galaxy --version && ansible-runner --version
 
 ########################
+# Terraform
+########################
+ARG TERRAFORM_VERSION=1.14.3
+RUN set -euo pipefail; \
+    arch="$(uname -m)"; \
+    case "${arch}" in \
+      x86_64) tf_arch="amd64" ;; \
+      aarch64|arm64) tf_arch="arm64" ;; \
+      *) echo "Unsupported arch: ${arch}" >&2; exit 1 ;; \
+    esac; \
+    tf_url="https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${tf_arch}.zip"; \
+    TF_URL="${tf_url}" python - <<'PY' && \
+    unzip -q /tmp/terraform.zip -d /usr/local/bin && \
+    rm -f /tmp/terraform.zip && \
+    /usr/local/bin/terraform -version
+import os
+import urllib.request
+
+url = os.environ["TF_URL"]
+    out_path = "/tmp/terraform.zip"
+with urllib.request.urlopen(url) as resp, open(out_path, "wb") as handle:
+    handle.write(resp.read())
+PY
+
+########################
 # Terragrunt
 ########################
 ARG TERRAGRUNT_VERSION=0.97.2
