@@ -1,3 +1,9 @@
+## [1.7.1](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.7.0...v1.7.1) (2026-01-31)
+
+### Bug Fixes
+
+* container renamed ([#58](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/58)) ([6e833f4](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/6e833f4b316a7d1da50007f8b9a0e176b98c61dc))
+
 ## [1.7.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.6.0...v1.7.0) (2026-01-18)
 
 ### Features
