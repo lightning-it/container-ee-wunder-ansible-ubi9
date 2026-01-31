@@ -37,5 +37,5 @@ certifi==2026.1.4
 # (often already pulled indirectly, but pinning avoids drift)
 # ---------------------------------------------------------------------------
 PyYAML==6.0.3
-jmespath==1.0.1
+jmespath==1.1.0
 packaging==26.0
