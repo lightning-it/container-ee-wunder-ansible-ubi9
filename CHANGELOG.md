@@ -1,3 +1,9 @@
+## [1.7.2](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.7.1...v1.7.2) (2026-02-16)
+
+### Bug Fixes
+
+* update image source URL in Dockerfile ([#67](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/67)) ([24a747b](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/24a747b5cef18e725982f4bfbe1022376c34e6c5))
+
 ## [1.7.1](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.7.0...v1.7.1) (2026-01-31)
 
 ### Bug Fixes
