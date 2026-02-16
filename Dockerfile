@@ -3,7 +3,7 @@ FROM registry.access.redhat.com/ubi9/python-311:9.7-1770655029
 LABEL maintainer="Lightning IT"
 LABEL org.opencontainers.image.title="ee-wunder-ansible-ubi9"
 LABEL org.opencontainers.image.description="Ansible Execution Environment (UBI 9) for Wunder automation (AAP + ansible-navigator)."
-LABEL org.opencontainers.image.source="https://github.com/lightning-it/container-ee-wunder-ansible-ubi9"
+LABEL org.opencontainers.image.source="https://github.com/lightning-it/ee-wunder-ansible-ubi9"
 
 ARG ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=
 ARG PKGMGR_OPTS="--nodocs --setopt=install_weak_deps=0 --setopt=*.module_hotfixes=1"
