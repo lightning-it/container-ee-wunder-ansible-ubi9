@@ -1,3 +1,9 @@
+## [1.8.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.7.2...v1.8.0) (2026-02-17)
+
+### Features
+
+* add Helm installation and usage instructions to Dockerfile and README ([#70](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/70)) ([993a535](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/993a53572a1d602398896f7192f7ca2827fe3f66))
+
 ## [1.7.2](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.7.1...v1.7.2) (2026-02-16)
 
 ### Bug Fixes
