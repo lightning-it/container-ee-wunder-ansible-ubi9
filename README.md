@@ -37,6 +37,11 @@ This image is published as **multi-arch** (linux/amd64 + linux/arm64).
 - `ansible-runner` **2.x** (pinned)
 - `hvac` (HashiCorp Vault Python client) pinned for `community.hashi_vault` lookups
 
+### Additional CLI tooling
+- `terraform` (pinned via Docker build arg)
+- `terragrunt` (pinned via Docker build arg)
+- `helm` (pinned via Docker build arg)
+
 ### OS dependencies
 - Installed from `bindep.txt` (RPM allow-list).
   This keeps OS dependencies explicit and reviewable.
@@ -76,6 +81,25 @@ Environment variables are set to standardize paths:
 docker run --rm quay.io/l-it/ee-wunder-ansible-ubi9:latest ansible --version
 docker run --rm quay.io/l-it/ee-wunder-ansible-ubi9:latest ansible-galaxy --version
 docker run --rm quay.io/l-it/ee-wunder-ansible-ubi9:latest ansible-runner --version
+docker run --rm quay.io/l-it/ee-wunder-ansible-ubi9:latest helm version --short
+```
+
+## Helm usage
+
+Basic check:
+
+```bash
+docker run --rm quay.io/l-it/ee-wunder-ansible-ubi9:latest helm version --short
+```
+
+Use local kubeconfig (read-only):
+
+```bash
+docker run --rm \
+  -v "$HOME/.kube:/runner/.kube:ro,Z" \
+  -e KUBECONFIG=/runner/.kube/config \
+  quay.io/l-it/ee-wunder-ansible-ubi9:latest \
+  helm list -A
 ```
 
 ---
