@@ -105,6 +105,32 @@ with urllib.request.urlopen(url) as resp, open(out_path, "wb") as handle:
 PY
 
 ################################################################################
+# Helm
+################################################################################
+ARG HELM_VERSION=3.19.0
+RUN set -euo pipefail; \
+    arch="$(uname -m)"; \
+    case "${arch}" in \
+      x86_64) helm_arch="amd64" ;; \
+      aarch64|arm64) helm_arch="arm64" ;; \
+      *) echo "Unsupported arch: ${arch}" >&2; exit 1 ;; \
+    esac; \
+    helm_url="https://get.helm.sh/helm-v${HELM_VERSION}-linux-${helm_arch}.tar.gz"; \
+    HELM_URL="${helm_url}" python - <<'PY' && \
+    tar -xzf /tmp/helm.tar.gz -C /tmp && \
+    install -m 0755 "/tmp/linux-${helm_arch}/helm" /usr/local/bin/helm && \
+    rm -rf /tmp/helm.tar.gz "/tmp/linux-${helm_arch}" && \
+    /usr/local/bin/helm version --short
+import os
+import urllib.request
+
+url = os.environ["HELM_URL"]
+out_path = "/tmp/helm.tar.gz"
+with urllib.request.urlopen(url) as resp, open(out_path, "wb") as handle:
+    handle.write(resp.read())
+PY
+
+################################################################################
 # EE layout (AAP/Controller uses /runner)
 ################################################################################
 RUN mkdir -p \
