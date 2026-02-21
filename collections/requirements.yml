@@ -1,8 +1,5 @@
 ---
 collections:
-  - name: https://github.com/ansible/ansible.platform.git
-    type: git
-    version: "2.6.20251106"
   - name: lit.foundational
     version: "1.15.0"
   - name: lit.rhel
