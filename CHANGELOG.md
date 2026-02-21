@@ -1,3 +1,9 @@
+## [1.9.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.8.1...v1.9.0) (2026-02-21)
+
+### Features
+
+* add ansible.platform collection to requirements and update Renovate configuration ([#77](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/77)) ([46dabd3](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/46dabd35b1e57740f9a1ea165514786f2b3f2400))
+
 ## [1.8.1](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.8.0...v1.8.1) (2026-02-21)
 
 ### Bug Fixes
