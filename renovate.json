@@ -34,6 +34,17 @@
       ],
       "datasourceTemplate": "galaxy-collection",
       "versioningTemplate": "semver"
+    },
+    {
+      "fileMatch": [
+        "^collections/requirements\\.yml$"
+      ],
+      "matchStrings": [
+        "-\\s+name:\\s+https://github\\.com/ansible/ansible\\.platform\\.git\\s*\\n\\s+type:\\s+git\\s*\\n\\s+version:\\s+\"?(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\"?"
+      ],
+      "depNameTemplate": "ansible/ansible.platform",
+      "datasourceTemplate": "github-tags",
+      "versioningTemplate": "loose"
     }
   ],
   "packageRules": [
