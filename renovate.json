@@ -1,7 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:base",
+    "config:recommended",
     ":semanticCommits",
     ":semanticCommitType(chore)",
     ":semanticCommitScope(deps)"
@@ -11,11 +11,12 @@
   ],
   "prConcurrentLimit": 5,
   "rebaseWhen": "conflicted",
-  "regexManagers": [
+  "customManagers": [
     {
-      "fileMatch": [
-        "^Dockerfile$",
-        "^Containerfile$"
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^Dockerfile$/",
+        "/^Containerfile$/"
       ],
       "matchStrings": [
         "ARG\\s+ANSIBLE_CORE_VERSION=(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\\s*\\n"
@@ -25,9 +26,10 @@
       "versioningTemplate": "pep440"
     },
     {
-      "fileMatch": [
-        "^collections/requirements\\.yml$",
-        "^collections/controller-requirements\\.yml$"
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^collections/requirements\\.yml$/",
+        "/^collections/controller-requirements\\.yml$/"
       ],
       "matchStrings": [
         "-\\s+name:\\s+(?<depName>[A-Za-z0-9_]+\\.[A-Za-z0-9_]+)\\s*\\n\\s+version:\\s+\"?(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\"?\\s*\\n"
@@ -36,8 +38,9 @@
       "versioningTemplate": "semver"
     },
     {
-      "fileMatch": [
-        "^collections/requirements\\.yml$"
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^collections/requirements\\.yml$/"
       ],
       "matchStrings": [
         "-\\s+name:\\s+https://github\\.com/ansible/ansible\\.platform\\.git\\s*\\n\\s+type:\\s+git\\s*\\n\\s+version:\\s+\"?(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\"?"
