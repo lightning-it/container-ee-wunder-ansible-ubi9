@@ -1,3 +1,9 @@
+## [1.9.1](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.9.0...v1.9.1) (2026-02-21)
+
+### Reverts
+
+* Revert "chore: sync shared assets from lightning-it/shared-assets ([#74](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/74))" ([#79](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/79)) ([0b9ebbd](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/0b9ebbd010249331f4fe1e63389d62371bea5eaf))
+
 ## [1.9.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.8.1...v1.9.0) (2026-02-21)
 
 ### Features
