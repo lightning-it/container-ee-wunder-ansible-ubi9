@@ -1,3 +1,9 @@
+## [1.8.1](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.8.0...v1.8.1) (2026-02-21)
+
+### Bug Fixes
+
+* update Podman build command format and add ansible.platform to requirements ([#73](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/73)) ([5c18866](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/5c18866c8dfce05b2ce4c9ec1ec1c665173b57d0))
+
 ## [1.8.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.7.2...v1.8.0) (2026-02-17)
 
 ### Features
