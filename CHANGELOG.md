@@ -1,3 +1,9 @@
+## [1.9.2](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.9.1...v1.9.2) (2026-02-21)
+
+### Bug Fixes
+
+* sync shared assets from lightning-it/shared-assets ([#80](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/80)) ([6a85e08](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/6a85e0888995bb4978ccaf60670fc70b3cc6d594))
+
 ## [1.9.1](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.9.0...v1.9.1) (2026-02-21)
 
 ### Reverts
