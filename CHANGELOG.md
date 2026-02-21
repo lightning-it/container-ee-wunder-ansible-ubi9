@@ -1,3 +1,9 @@
+## [1.9.3](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.9.2...v1.9.3) (2026-02-21)
+
+### Bug Fixes
+
+* remove obsolete git dependency from requirements.yml ([#83](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/83)) ([fce4177](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/fce417756e8c039974b6aa62b6fcf4b49fd2b92c))
+
 ## [1.9.2](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.9.1...v1.9.2) (2026-02-21)
 
 ### Bug Fixes
