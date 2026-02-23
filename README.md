@@ -48,6 +48,7 @@ This image is published as **multi-arch** (linux/amd64 + linux/arm64).
 
 ### Ansible content
 - Collections installed from `collections/requirements.yml` during build
+  (aligned with `modulix-automation/ansible/collections/requirements-public.yml`)
 - Optional controller collections from `collections/controller-requirements.yml` (guarded; skipped if empty)
 - Optional roles from `roles/requirements.yml` (guarded; skipped if empty)
 
