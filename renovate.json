@@ -11,6 +11,13 @@
   ],
   "prConcurrentLimit": 5,
   "rebaseWhen": "conflicted",
+  "hostRules": [
+    {
+      "matchHost": "console.redhat.com",
+      "hostType": "galaxy-collection",
+      "token": "{{ secrets.RH_AUTOMATION_HUB_TOKEN }}"
+    }
+  ],
   "customManagers": [
     {
       "customType": "regex",
@@ -78,6 +85,18 @@
         "galaxy-collection"
       ],
       "allowedVersions": "/^5\\.10\\.0$/"
+    },
+    {
+      "description": "Resolve certified-only collections from Red Hat Automation Hub",
+      "matchDatasources": [
+        "galaxy-collection"
+      ],
+      "matchFileNames": [
+        "collections/requirements-certified-extra.yml"
+      ],
+      "registryUrls": [
+        "https://console.redhat.com/api/automation-hub/content/published/"
+      ]
     },
     {
       "matchDatasources": [
