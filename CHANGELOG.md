@@ -1,3 +1,9 @@
+## [1.11.2](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.11.1...v1.11.2) (2026-02-24)
+
+### Bug Fixes
+
+* pin collection general ([#93](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/93)) ([c385628](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/c385628333ead3fa655d22470cf65d171aabfc18))
+
 ## [1.11.1](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.11.0...v1.11.1) (2026-02-24)
 
 ### Bug Fixes
