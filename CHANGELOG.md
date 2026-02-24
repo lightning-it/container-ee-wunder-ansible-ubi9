@@ -1,3 +1,9 @@
+## [1.11.3](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.11.2...v1.11.3) (2026-02-24)
+
+### Bug Fixes
+
+* update token handling for galaxy-collection host ([#95](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/95)) ([fb4522d](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/fb4522d0c7c08d93fa6922a5141682dc7f05302e))
+
 ## [1.11.2](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.11.1...v1.11.2) (2026-02-24)
 
 ### Bug Fixes
