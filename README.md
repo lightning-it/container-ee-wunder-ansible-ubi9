@@ -22,17 +22,19 @@ Build argument:
 
 Profile sources:
 
-- `collections/requirements-public.yml`
-- `collections/requirements-certified.yml`
+- `collections/requirements-base.yml` (installed for both profiles)
+- `collections/requirements-certified-extra.yml` (installed only for `certified`)
 - `collections/controller-requirements.yml` (optional, guarded)
 
 ### `public` profile
 
+- Installs `requirements-base.yml`
 - Uses public Galaxy collections only
 - Does not require Automation Hub token
 
 ### `certified` profile
 
+- Installs `requirements-base.yml` and `requirements-certified-extra.yml`
 - Adds official RH/AAP collections
 - Requires BuildKit secret `rh_automation_hub_token`
 - CI injects secret from `RH_AUTOMATION_HUB_TOKEN`

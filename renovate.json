@@ -28,8 +28,8 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/^collections/requirements-public\\.yml$/",
-        "/^collections/requirements-certified\\.yml$/",
+        "/^collections/requirements-base\\.yml$/",
+        "/^collections/requirements-certified-extra\\.yml$/",
         "/^collections/controller-requirements\\.yml$/"
       ],
       "matchStrings": [
@@ -41,8 +41,8 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/^collections/requirements-public\\.yml$/",
-        "/^collections/requirements-certified\\.yml$/"
+        "/^collections/requirements-base\\.yml$/",
+        "/^collections/requirements-certified-extra\\.yml$/"
       ],
       "matchStrings": [
         "-\\s+name:\\s+https://github\\.com/(?<depName>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\\.git\\s*\\n\\s+type:\\s+git\\s*\\n\\s+version:\\s+\"?(?<currentValue>[^\"\\n]+)\"?"
