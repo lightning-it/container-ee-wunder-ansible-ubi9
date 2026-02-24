@@ -1,3 +1,9 @@
+## [1.11.6](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.11.5...v1.11.6) (2026-02-24)
+
+### Bug Fixes
+
+* renovate token handling ([#100](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/100)) ([fbd1616](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/fbd1616d6444aa6a47899651d966829cbb69f85f))
+
 ## [1.11.5](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.11.4...v1.11.5) (2026-02-24)
 
 ### Bug Fixes
