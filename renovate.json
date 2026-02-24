@@ -15,7 +15,7 @@
     {
       "matchHost": "console.redhat.com",
       "hostType": "galaxy-collection",
-      "token": "{{ secrets.RH_AUTOMATION_HUB_TOKEN }}"
+      "token": "{{ env.RH_AUTOMATION_HUB_TOKEN }}"
     }
   ],
   "customManagers": [
