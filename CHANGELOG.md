@@ -1,3 +1,9 @@
+## [1.10.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.9.3...v1.10.0) (2026-02-24)
+
+### Features
+
+* update Ansible collections and pin community.vmware for compatibility ([#87](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/87)) ([c5608d4](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/c5608d4b3ce4c95ce968710495ea6b805044006d))
+
 ## [1.9.3](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.9.2...v1.9.3) (2026-02-21)
 
 ### Bug Fixes
