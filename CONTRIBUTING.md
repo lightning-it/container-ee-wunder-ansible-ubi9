@@ -57,6 +57,7 @@ A good PR:
 - Docker or Podman (Buildx recommended if using Docker)
 - Python 3.11+ (for pre-commit and local checks)
 - `pre-commit`
+- `RH_AUTOMATION_HUB_TOKEN` (required only for certified profile builds)
 
 ### Install pre-commit hooks
 
@@ -75,16 +76,25 @@ pre-commit run --all-files
 
 ### Build locally
 
-Docker (recommended with buildx):
+Public profile (`ee-wunder-ansible-ubi9`):
 
 ```bash
-docker buildx build -t ee-wunder-toolbox-ubi9:local .
+docker buildx build \
+  --build-arg COLLECTION_PROFILE=public \
+  -t ee-wunder-ansible-ubi9:public-local \
+  .
 ```
 
-Podman:
+Certified profile (`ee-wunder-ansible-ubi9-certified`):
 
 ```bash
-podman build --format docker -t ee-wunder-toolbox-ubi9:local .
+export RH_AUTOMATION_HUB_TOKEN='<token>'
+
+docker buildx build \
+  --build-arg COLLECTION_PROFILE=certified \
+  --secret id=rh_automation_hub_token,env=RH_AUTOMATION_HUB_TOKEN \
+  -t ee-wunder-ansible-ubi9-certified:local \
+  .
 ```
 
 ### Smoke test
@@ -92,10 +102,9 @@ podman build --format docker -t ee-wunder-toolbox-ubi9:local .
 Example (basic CLI check):
 
 ```bash
-podman run --rm ee-wunder-toolbox-ubi9:local ansible-navigator --version
-podman run --rm ee-wunder-toolbox-ubi9:local helm version --short
-podman run --rm ee-wunder-toolbox-ubi9:local kustomize version
-podman run --rm ee-wunder-toolbox-ubi9:local sh -lc 'command -v ansible-nav && command -v test-ansible.sh'
+podman run --rm ee-wunder-ansible-ubi9:public-local ansible --version
+podman run --rm ee-wunder-ansible-ubi9:public-local ansible-galaxy --version
+podman run --rm ee-wunder-ansible-ubi9-certified:local ansible --version
 ```
 
 ## Dependency Policy

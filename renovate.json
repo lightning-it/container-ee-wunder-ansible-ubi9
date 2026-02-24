@@ -28,7 +28,8 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/^collections/requirements\\.yml$/",
+        "/^collections/requirements-base\\.yml$/",
+        "/^collections/requirements-certified-extra\\.yml$/",
         "/^collections/controller-requirements\\.yml$/"
       ],
       "matchStrings": [
@@ -40,12 +41,12 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/^collections/requirements\\.yml$/"
+        "/^collections/requirements-base\\.yml$/",
+        "/^collections/requirements-certified-extra\\.yml$/"
       ],
       "matchStrings": [
-        "-\\s+name:\\s+https://github\\.com/ansible/ansible\\.platform\\.git\\s*\\n\\s+type:\\s+git\\s*\\n\\s+version:\\s+\"?(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\"?"
+        "-\\s+name:\\s+https://github\\.com/(?<depName>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\\.git\\s*\\n\\s+type:\\s+git\\s*\\n\\s+version:\\s+\"?(?<currentValue>[^\"\\n]+)\"?"
       ],
-      "depNameTemplate": "ansible/ansible.platform",
       "datasourceTemplate": "github-tags",
       "versioningTemplate": "loose"
     }

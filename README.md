@@ -1,224 +1,88 @@
 # ee-wunder-ansible-ubi9
 
-An **Ansible Execution Environment (EE)** based on **Red Hat UBI 9 (Python 3.11)** with **ansible-core** and **ansible-runner**, built for running playbooks via:
+Ansible Execution Environment (UBI 9, Python 3.11) with a dual publish model:
 
-- **ansible-navigator** (Execution Environment mode)
-- **ansible-runner** (AAP/Controller-like execution model)
-- local workflows and CI pipelines
+- `ee-wunder-ansible-ubi9`: public Galaxy-only content profile
+- `ee-wunder-ansible-ubi9-certified`: Automation Hub-certified profile baked at build time
 
-This image is intentionally minimal and deterministic: it contains only what is needed to run Ansible reliably inside a container, plus a controlled set of OS dependencies via `bindep.txt`.
+## Published images
 
-> **Versioning note:** Image tags follow repository release tags (e.g. `v1.1.1`) plus `latest`.
-> The Ansible version is pinned via build arguments (currently `ansible-core 2.18.x`).
+From this single repository, release CI publishes:
 
----
+- `quay.io/<QUAY_NAMESPACE>/ee-wunder-ansible-ubi9:<tag>`
+- `quay.io/<QUAY_NAMESPACE>/ee-wunder-ansible-ubi9:latest`
+- `quay.io/<QUAY_NAMESPACE>/ee-wunder-ansible-ubi9-certified:<tag>`
+- `quay.io/<QUAY_NAMESPACE>/ee-wunder-ansible-ubi9-certified:latest`
 
-## Image name and tags
+## Collection profiles
 
-The repository name is `container-ee-wunder-ansible-ubi9`, but the published image is:
+Build argument:
 
-- `quay.io/l-it/ee-wunder-ansible-ubi9:<tag>`
+- `COLLECTION_PROFILE=public|certified`
 
-Example tags:
-- `quay.io/l-it/ee-wunder-ansible-ubi9:v1.1.4`
-- `quay.io/l-it/ee-wunder-ansible-ubi9:latest`
+Profile sources:
 
-This image is published as **multi-arch** (linux/amd64 + linux/arm64).
+- `collections/requirements-base.yml` (installed for both profiles)
+- `collections/requirements-certified-extra.yml` (installed only for `certified`)
+- `collections/controller-requirements.yml` (optional, guarded)
 
----
+### `public` profile
 
-## What’s inside
+- Installs `requirements-base.yml`
+- Uses public Galaxy collections only
+- Does not require Automation Hub token
 
-### Base
-- **UBI 9** (Python 3.11 base image)
+### `certified` profile
 
-### Python tooling
-- `ansible-core` **2.18.x** (pinned)
-- `ansible-runner` **2.x** (pinned)
-- `hvac` (HashiCorp Vault Python client) pinned for `community.hashi_vault` lookups
+- Installs `requirements-base.yml` and `requirements-certified-extra.yml`
+- Adds official RH/AAP collections
+- Requires BuildKit secret `rh_automation_hub_token`
+- CI injects secret from `RH_AUTOMATION_HUB_TOKEN`
 
-### Additional CLI tooling
-- `terraform` (pinned via Docker build arg)
-- `terragrunt` (pinned via Docker build arg)
-- `helm` (pinned via Docker build arg)
+## CI publish flow
 
-### OS dependencies
-- Installed from `bindep.txt` (RPM allow-list).
-  This keeps OS dependencies explicit and reviewable.
+Workflow: `.github/workflows/container-build-publish.yml`
 
-### Ansible content
-- Collections installed from `collections/requirements.yml` during build
-  (aligned with `modulix-automation/ansible/collections/requirements-public.yml`)
-- Optional controller collections from `collections/controller-requirements.yml` (guarded; skipped if empty)
-- Optional roles from `roles/requirements.yml` (guarded; skipped if empty)
+Trigger:
 
-### Runtime conventions (AAP-friendly)
-- Non-root runtime user: `runner` (uid/gid `1000`)
-- `HOME=/runner`
-- Writable layout under `/runner` and `/tmp/ansible/tmp`
+- GitHub Release `published`
 
----
+Required repository configuration:
 
-## Filesystem layout (important for AAP / ansible-runner)
+- Variable: `QUAY_NAMESPACE`
+- Secrets: `QUAY_USERNAME`, `QUAY_PASSWORD`
+- Secret for certified profile: `RH_AUTOMATION_HUB_TOKEN`
 
-This image follows the typical Execution Environment layout expected by AAP/ansible-runner:
+## Local builds
 
-- `/runner/project` — project content (playbooks)
-- `/runner/inventory` — inventory
-- `/runner/env` — runner env (optional)
-- `/runner/project/roles` and `/runner/roles` — created to avoid missing-path warnings
-- `/tmp/ansible/tmp` — temp (sticky)
-
-Environment variables are set to standardize paths:
-
-- `ANSIBLE_COLLECTIONS_PATH=/usr/share/ansible/collections:/usr/share/automation-controller/collections:/runner/project/collections:/runner/collections`
-- `ANSIBLE_ROLES_PATH=/usr/share/ansible/roles:/runner/project/roles:/runner/roles`
-
----
-
-## Quick test (CLI)
+Public image:
 
 ```bash
-docker run --rm quay.io/l-it/ee-wunder-ansible-ubi9:latest ansible --version
-docker run --rm quay.io/l-it/ee-wunder-ansible-ubi9:latest ansible-galaxy --version
-docker run --rm quay.io/l-it/ee-wunder-ansible-ubi9:latest ansible-runner --version
-docker run --rm quay.io/l-it/ee-wunder-ansible-ubi9:latest helm version --short
+docker buildx build \
+  --build-arg COLLECTION_PROFILE=public \
+  -t ee-wunder-ansible-ubi9:public-local \
+  .
 ```
 
-## Helm usage
-
-Basic check:
+Certified image:
 
 ```bash
-docker run --rm quay.io/l-it/ee-wunder-ansible-ubi9:latest helm version --short
+export RH_AUTOMATION_HUB_TOKEN='<token>'
+
+docker buildx build \
+  --build-arg COLLECTION_PROFILE=certified \
+  --secret id=rh_automation_hub_token,env=RH_AUTOMATION_HUB_TOKEN \
+  -t ee-wunder-ansible-ubi9-certified:local \
+  .
 ```
 
-Use local kubeconfig (read-only):
+## Smoke test
 
 ```bash
-docker run --rm \
-  -v "$HOME/.kube:/runner/.kube:ro,Z" \
-  -e KUBECONFIG=/runner/.kube/config \
-  quay.io/l-it/ee-wunder-ansible-ubi9:latest \
-  helm list -A
+./scripts/test-ee.sh ee-wunder-ansible-ubi9:public-local
+./scripts/test-ee.sh ee-wunder-ansible-ubi9-certified:local
 ```
 
----
+## Runtime note
 
-## AAP-like test (ansible-runner)
-
-This closely mirrors how AAP/Controller executes jobs.
-
-```bash
-rm -rf /tmp/ee-test && mkdir -p /tmp/ee-test/project /tmp/ee-test/inventory
-
-cat > /tmp/ee-test/project/ping.yml <<'YML'
-- hosts: localhost
-  gather_facts: false
-  tasks:
-    - ansible.builtin.ping:
-YML
-
-cat > /tmp/ee-test/inventory/hosts <<'TXT'
-localhost ansible_connection=local ansible_python_interpreter=/opt/app-root/bin/python3.11
-TXT
-
-docker run --rm -v /tmp/ee-test:/runner \
-  quay.io/l-it/ee-wunder-ansible-ubi9:latest \
-  bash -lc 'ansible-runner run /runner --playbook ping.yml --inventory /runner/inventory/hosts'
-```
-
----
-
-## Full smoke test script
-
-A ready-to-run test script is provided to validate “AAP-like” behavior:
-
-- `scripts/test-ee.sh`
-
-Usage:
-
-```bash
-chmod +x scripts/test-ee.sh
-
-# test latest
-./scripts/test-ee.sh
-
-# test a specific release tag
-./scripts/test-ee.sh quay.io/l-it/ee-wunder-ansible-ubi9:latest
-
-# test a locally built image
-./scripts/test-ee.sh ee-wunder-ansible-ubi9:local
-```
-
----
-
-## Use with ansible-navigator
-
-Example `ansible-navigator.yml`:
-
-```yaml
----
-ansible-navigator:
-  execution-environment:
-    enabled: true
-    container-engine: docker
-    image: quay.io/l-it/ee-wunder-ansible-ubi9:latest
-    pull:
-      policy: tag
-    environment-variables:
-      pass:
-        - ANSIBLE_CONFIG
-        - ANSIBLE_VAULT_PASSWORD_FILE
-  mode: stdout
-  playbook-artifact:
-    enable: false
-```
-
-Run:
-
-```bash
-ansible-navigator run playbooks/site.yml -i inventories/prod.yml
-```
-
----
-
-## Build locally
-
-```bash
-docker buildx build -t ee-wunder-ansible-ubi9:local .
-```
-
----
-
-## Dependency updates (Renovate)
-
-This repository uses Renovate to keep:
-- `ansible-core` build arg updated (restricted to the `2.18.x` line)
-- Ansible Galaxy collections in `collections/requirements.yml` updated (pinned versions)
-
----
-
-## Notes
-
-- The image uses **UBI9 Python 3.11**, aligned with modern `ansible-core` requirements.
-- The image uses **CMD** (not ENTRYPOINT) to avoid command-override issues with ansible-navigator/AAP.
-- Controller-specific collections and roles are **optional**; guarded install steps allow empty requirements files without breaking builds.
-
----
-
-## Contributing
-
-See `CONTRIBUTING.md`.
-
-## Security
-
-See `SECURITY.md`. For vulnerabilities: **security@l-it.io**.
-
-## Code of Conduct
-
-See `CODE_OF_CONDUCT.md`.
-
-## License
-
-See `LICENSE` and any upstream dependency licenses as applicable.
+For disconnected execution, preload/mirror the selected EE image and use it explicitly in runtime wrappers (for example `ANSIBLE_TOOLBOX_NAV_EE_IMAGE=<image:tag>`).
