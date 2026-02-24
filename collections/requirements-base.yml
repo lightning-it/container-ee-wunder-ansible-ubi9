@@ -7,7 +7,7 @@ collections:
   - name: lit.supplementary
     version: "1.16.8"
   - name: lit.ocp
-    version: "1.3.3"
+    version: "1.3.6"
   - name: ansible.posix
     version: "2.1.0"
   - name: community.general
@@ -21,4 +21,4 @@ collections:
   - name: containers.podman
     version: "1.19.0"
   - name: fedora.linux_system_roles
-    version: "1.120.4"
+    version: "1.120.5"
