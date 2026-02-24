@@ -59,15 +59,12 @@ A good PR:
 - `pre-commit`
 - `RH_AUTOMATION_HUB_TOKEN` (required only for certified profile builds)
 
-### Renovate (Mend) credentials
+### Renovate scope for certified collections
 
-This repository is updated by Mend-hosted Renovate, not GitHub Actions.  
-`renovate.json` expects Automation Hub auth from:
-
-- `RH_AUTOMATION_HUB_TOKEN` as a Mend environment variable
-
-If this variable is missing in Mend, certified collection lookups will fail in
-`collections/requirements-certified-extra.yml`.
+`collections/requirements-certified-extra.yml` is intentionally not tracked by
+Renovate in this repository. Certified Automation Hub updates are handled
+manually or by dedicated CI automation due to auth-flow limitations in
+Mend-hosted Renovate for Red Hat offline tokens.
 
 ### Install pre-commit hooks
 
