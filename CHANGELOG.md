@@ -1,3 +1,9 @@
+## [1.11.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.10.0...v1.11.0) (2026-02-24)
+
+### Features
+
+* refactored collection handling ([#88](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/88)) ([ebe30d0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/ebe30d026d8bef3f1b6797f814458f83a86e3373))
+
 ## [1.10.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.9.3...v1.10.0) (2026-02-24)
 
 ### Features
