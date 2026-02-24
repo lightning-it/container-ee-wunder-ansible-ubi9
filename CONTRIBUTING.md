@@ -57,14 +57,6 @@ A good PR:
 - Docker or Podman (Buildx recommended if using Docker)
 - Python 3.11+ (for pre-commit and local checks)
 - `pre-commit`
-- `RH_AUTOMATION_HUB_TOKEN` (required only for certified profile builds)
-
-### Renovate scope for certified collections
-
-`collections/requirements-certified-extra.yml` is intentionally not tracked by
-Renovate in this repository. Certified Automation Hub updates are handled
-manually or by dedicated CI automation due to auth-flow limitations in
-Mend-hosted Renovate for Red Hat offline tokens.
 
 ### Install pre-commit hooks
 
@@ -83,25 +75,16 @@ pre-commit run --all-files
 
 ### Build locally
 
-Public profile (`ee-wunder-ansible-ubi9`):
+Docker (recommended with buildx):
 
 ```bash
-docker buildx build \
-  --build-arg COLLECTION_PROFILE=public \
-  -t ee-wunder-ansible-ubi9:public-local \
-  .
+docker buildx build -t ee-wunder-toolbox-ubi9:local .
 ```
 
-Certified profile (`ee-wunder-ansible-ubi9-certified`):
+Podman:
 
 ```bash
-export RH_AUTOMATION_HUB_TOKEN='<token>'
-
-docker buildx build \
-  --build-arg COLLECTION_PROFILE=certified \
-  --secret id=rh_automation_hub_token,env=RH_AUTOMATION_HUB_TOKEN \
-  -t ee-wunder-ansible-ubi9-certified:local \
-  .
+podman build --format docker -t ee-wunder-toolbox-ubi9:local .
 ```
 
 ### Smoke test
@@ -109,9 +92,10 @@ docker buildx build \
 Example (basic CLI check):
 
 ```bash
-podman run --rm ee-wunder-ansible-ubi9:public-local ansible --version
-podman run --rm ee-wunder-ansible-ubi9:public-local ansible-galaxy --version
-podman run --rm ee-wunder-ansible-ubi9-certified:local ansible --version
+podman run --rm ee-wunder-toolbox-ubi9:local ansible-navigator --version
+podman run --rm ee-wunder-toolbox-ubi9:local helm version --short
+podman run --rm ee-wunder-toolbox-ubi9:local kustomize version
+podman run --rm ee-wunder-toolbox-ubi9:local sh -lc 'command -v ansible-nav && command -v test-ansible.sh'
 ```
 
 ## Dependency Policy
