@@ -11,10 +11,18 @@ permissions:
 
 jobs:
   build:
-    name: Build & push image to Quay.io
+    name: Build & push (${{ matrix.profile }}) to Quay.io
     runs-on: ubuntu-latest
     env:
       REGISTRY: quay.io
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: public
+            image_suffix: ""
+          - profile: certified
+            image_suffix: "-certified"
 
     steps:
       - name: Checkout
@@ -52,16 +60,28 @@ jobs:
 
           echo "Quay configuration present (namespace + credentials)."
 
-      - name: Compute image name + tag (strip "container-" prefix)
+      - name: Validate RH token for certified profile
+        if: ${{ matrix.profile == 'certified' }}
+        shell: bash
+        env:
+          RH_AUTOMATION_HUB_TOKEN: ${{ secrets.RH_AUTOMATION_HUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RH_AUTOMATION_HUB_TOKEN:-}" ]; then
+            echo "::error::Missing required secret for certified profile: secrets.RH_AUTOMATION_HUB_TOKEN"
+            exit 1
+          fi
+
+      - name: Compute image name + tag
         shell: bash
         env:
           QUAY_NAMESPACE: ${{ vars.QUAY_NAMESPACE }}
         run: |
           set -euo pipefail
-          repo="${GITHUB_REPOSITORY#*/}"
-          image_repo="${repo#container-}"
+          repo="${GITHUB_REPOSITORY#*/}"           # e.g. container-ee-wunder-ansible-ubi9
+          base_repo="${repo#container-}"           # e.g. ee-wunder-ansible-ubi9
+          image_repo="${base_repo}${{ matrix.image_suffix }}"
 
-          # Always use vars.QUAY_NAMESPACE (validated above)
           image_name="${REGISTRY}/${QUAY_NAMESPACE}/${image_repo}"
           tag="${{ github.event.release.tag_name }}"
 
@@ -84,13 +104,32 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
 
-      - name: Build and push image (amd64 + arm64)
+      - name: Build and push public image (amd64 + arm64)
+        if: ${{ matrix.profile == 'public' }}
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            COLLECTION_PROFILE=${{ matrix.profile }}
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ env.RELEASE_TAG }}
+            ${{ env.IMAGE_NAME }}:latest
+
+      - name: Build and push certified image (amd64 + arm64)
+        if: ${{ matrix.profile == 'certified' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            COLLECTION_PROFILE=${{ matrix.profile }}
+          secrets: |
+            rh_automation_hub_token=${{ secrets.RH_AUTOMATION_HUB_TOKEN }}
           tags: |
             ${{ env.IMAGE_NAME }}:${{ env.RELEASE_TAG }}
             ${{ env.IMAGE_NAME }}:latest

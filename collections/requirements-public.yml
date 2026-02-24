@@ -1,8 +1,4 @@
 ---
-# Legacy compatibility file.
-# Source-of-truth for image builds is:
-# - requirements-public.yml (public image profile)
-# - requirements-certified.yml (certified image profile)
 collections:
   - name: lit.foundational
     version: "1.15.2"

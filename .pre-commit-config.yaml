@@ -56,7 +56,7 @@ repos:
         name: container build (local)
         language: system
         pass_filenames: false
-        files: ^(Dockerfile|Containerfile|\.dockerignore|requirements\.txt|package\.json|package-lock\.json)$
+        files: ^(Dockerfile|Containerfile|\.dockerignore|requirements\.txt|collections/requirements-(public|certified)\.yml|collections/controller-requirements\.yml|package\.json|package-lock\.json)$
         entry: >-
           bash -lc '
             set -euo pipefail
@@ -64,10 +64,14 @@ repos:
 
             if docker buildx version >/dev/null 2>&1; then
               echo "Using buildx..."
-              docker buildx build --load -t "$IMAGE" -f Dockerfile .
+              docker buildx build --load \
+                --build-arg COLLECTION_PROFILE=public \
+                -t "$IMAGE" -f Dockerfile .
             else
               echo "Using docker build..."
-              docker build -t "$IMAGE" -f Dockerfile .
+              docker build \
+                --build-arg COLLECTION_PROFILE=public \
+                -t "$IMAGE" -f Dockerfile .
             fi
 
             echo "Built $IMAGE"
@@ -82,14 +86,16 @@ repos:
         name: container smoke test (ansible/cli)
         language: system
         pass_filenames: false
-        files: ^(Dockerfile|Containerfile|\.dockerignore|requirements\.txt|package\.json|package-lock\.json)$
+        files: ^(Dockerfile|Containerfile|\.dockerignore|requirements\.txt|collections/requirements-(public|certified)\.yml|collections/controller-requirements\.yml|package\.json|package-lock\.json)$
         entry: >-
           bash -lc '
             set -euo pipefail
             IMAGE="local/${PWD##*/}:precommit"
 
             if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-              docker build -t "$IMAGE" -f Dockerfile .
+              docker build \
+                --build-arg COLLECTION_PROFILE=public \
+                -t "$IMAGE" -f Dockerfile .
             fi
 
             docker run --rm "$IMAGE" bash -lc "ansible --version"
