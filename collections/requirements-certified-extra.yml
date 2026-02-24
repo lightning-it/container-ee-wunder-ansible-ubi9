@@ -1,4 +1,9 @@
 ---
+# WARNING:
+# This file is intentionally excluded from Renovate checks/updates.
+# Red Hat Automation Hub uses an offline-token -> access-token auth flow that
+# Renovate cannot execute for galaxy-collection lookups in Mend-hosted mode.
+# Maintain versions in this file via controlled manual/CI update workflow.
 collections:
   - name: ansible.hub
     version: "1.0.4"

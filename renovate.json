@@ -11,13 +11,6 @@
   ],
   "prConcurrentLimit": 5,
   "rebaseWhen": "conflicted",
-  "hostRules": [
-    {
-      "matchHost": "console.redhat.com",
-      "hostType": "galaxy-collection",
-      "token": "{{ env.RH_AUTOMATION_HUB_TOKEN }}"
-    }
-  ],
   "customManagers": [
     {
       "customType": "regex",
@@ -36,7 +29,6 @@
       "customType": "regex",
       "managerFilePatterns": [
         "/^collections/requirements-base\\.yml$/",
-        "/^collections/requirements-certified-extra\\.yml$/",
         "/^collections/controller-requirements\\.yml$/"
       ],
       "matchStrings": [
@@ -48,8 +40,7 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/^collections/requirements-base\\.yml$/",
-        "/^collections/requirements-certified-extra\\.yml$/"
+        "/^collections/requirements-base\\.yml$/"
       ],
       "matchStrings": [
         "-\\s+name:\\s+https://github\\.com/(?<depName>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)\\.git\\s*\\n\\s+type:\\s+git\\s*\\n\\s+version:\\s+\"?(?<currentValue>[^\"\\n]+)\"?"
@@ -85,18 +76,6 @@
         "galaxy-collection"
       ],
       "allowedVersions": "/^5\\.10\\.0$/"
-    },
-    {
-      "description": "Resolve certified-only collections from Red Hat Automation Hub",
-      "matchDatasources": [
-        "galaxy-collection"
-      ],
-      "matchFileNames": [
-        "collections/requirements-certified-extra.yml"
-      ],
-      "registryUrls": [
-        "https://console.redhat.com/api/automation-hub/content/published/"
-      ]
     },
     {
       "matchDatasources": [
