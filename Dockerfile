@@ -50,7 +50,7 @@ RUN set -euo pipefail; \
 ################################################################################
 ARG PIP_TIMEOUT=120
 ARG PIP_RETRIES=5
-ARG PIP_VERSION=24.3.1
+ARG PIP_VERSION=26.0.1
 
 COPY requirements.txt /build/requirements.txt
 
