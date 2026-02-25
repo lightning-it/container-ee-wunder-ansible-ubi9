@@ -26,6 +26,7 @@ jobs:
           QUAY_NAMESPACE: ${{ vars.QUAY_NAMESPACE }}
           QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
           QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
+          RH_AUTOMATION_HUB_TOKEN: ${{ secrets.RH_AUTOMATION_HUB_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -46,13 +47,18 @@ jobs:
             fail=1
           fi
 
+          if [ -z "${RH_AUTOMATION_HUB_TOKEN:-}" ]; then
+            echo "::error::Missing required secret: secrets.RH_AUTOMATION_HUB_TOKEN"
+            fail=1
+          fi
+
           if [ "$fail" -ne 0 ]; then
             exit 1
           fi
 
-          echo "Quay configuration present (namespace + credentials)."
+          echo "Quay configuration present (namespace + credentials + RH token)."
 
-      - name: Compute image name + tag (strip "container-" prefix)
+      - name: Compute image names + tag (strip "container-" prefix)
         shell: bash
         env:
           QUAY_NAMESPACE: ${{ vars.QUAY_NAMESPACE }}
@@ -61,14 +67,19 @@ jobs:
           repo="${GITHUB_REPOSITORY#*/}"
           image_repo="${repo#container-}"
 
-          # Always use vars.QUAY_NAMESPACE (validated above)
-          image_name="${REGISTRY}/${QUAY_NAMESPACE}/${image_repo}"
+          image_name_public="${REGISTRY}/${QUAY_NAMESPACE}/${image_repo}"
+          image_name_certified="${REGISTRY}/${QUAY_NAMESPACE}/${image_repo}-certified"
+          image_name_bootstrap="${REGISTRY}/${QUAY_NAMESPACE}/${image_repo}-bootstrap"
           tag="${{ github.event.release.tag_name }}"
 
-          echo "IMAGE_NAME=${image_name}" >> "$GITHUB_ENV"
+          echo "IMAGE_NAME_PUBLIC=${image_name_public}" >> "$GITHUB_ENV"
+          echo "IMAGE_NAME_CERTIFIED=${image_name_certified}" >> "$GITHUB_ENV"
+          echo "IMAGE_NAME_BOOTSTRAP=${image_name_bootstrap}" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=${tag}" >> "$GITHUB_ENV"
 
-          echo "Using IMAGE_NAME=${image_name}"
+          echo "Using IMAGE_NAME_PUBLIC=${image_name_public}"
+          echo "Using IMAGE_NAME_CERTIFIED=${image_name_certified}"
+          echo "Using IMAGE_NAME_BOOTSTRAP=${image_name_bootstrap}"
           echo "Using RELEASE_TAG=${tag}"
 
       - name: Set up QEMU (multi-arch)
@@ -84,13 +95,43 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
 
-      - name: Build and push image (amd64 + arm64)
+      - name: Build and push public image (amd64 + arm64)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            COLLECTION_PROFILE=public
           tags: |
-            ${{ env.IMAGE_NAME }}:${{ env.RELEASE_TAG }}
-            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.IMAGE_NAME_PUBLIC }}:${{ env.RELEASE_TAG }}
+            ${{ env.IMAGE_NAME_PUBLIC }}:latest
+
+      - name: Build and push certified image (amd64 + arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            COLLECTION_PROFILE=certified
+          secrets: |
+            rh_automation_hub_token=${{ secrets.RH_AUTOMATION_HUB_TOKEN }}
+          tags: |
+            ${{ env.IMAGE_NAME_CERTIFIED }}:${{ env.RELEASE_TAG }}
+            ${{ env.IMAGE_NAME_CERTIFIED }}:latest
+
+      - name: Build and push bootstrap image (amd64 + arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            COLLECTION_PROFILE=bootstrap
+          tags: |
+            ${{ env.IMAGE_NAME_BOOTSTRAP }}:${{ env.RELEASE_TAG }}
+            ${{ env.IMAGE_NAME_BOOTSTRAP }}:latest

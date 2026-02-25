@@ -165,17 +165,13 @@ ENV HOME=/runner \
 ################################################################################
 WORKDIR /build
 
-# --- Collections (base + certified extra) ---
+# --- Collections (public/certified/none) ---
 COPY collections/requirements-base.yml /build/collections-requirements-base.yml
 COPY collections/requirements-certified-extra.yml /build/collections-requirements-certified-extra.yml
 RUN --mount=type=secret,id=rh_automation_hub_token,required=false \
     set -euo pipefail; \
     base_req_file="/build/collections-requirements-base.yml"; \
     certified_extra_req_file="/build/collections-requirements-certified-extra.yml"; \
-    if [[ ! -f "${base_req_file}" ]]; then \
-      echo "Base collections requirements file not found: ${base_req_file}" >&2; \
-      exit 1; \
-    fi; \
     install_with_retry() { \
       local attempts="${ANSIBLE_GALAXY_INSTALL_RETRIES}"; \
       local delay="${ANSIBLE_GALAXY_RETRY_DELAY_SECONDS}"; \
@@ -196,7 +192,7 @@ RUN --mount=type=secret,id=rh_automation_hub_token,required=false \
         ansible-galaxy "$@"; \
       fi; \
     }; \
-    configure_automation_hub() { \
+    require_automation_hub_token() { \
       token_file="/run/secrets/rh_automation_hub_token"; \
       if [[ ! -s "${token_file}" ]]; then \
         echo "Missing required build secret for certified profile: rh_automation_hub_token" >&2; \
@@ -207,6 +203,9 @@ RUN --mount=type=secret,id=rh_automation_hub_token,required=false \
         echo "Build secret rh_automation_hub_token is empty" >&2; \
         exit 1; \
       fi; \
+    }; \
+    configure_automation_hub() { \
+      require_automation_hub_token; \
       { \
         echo "[galaxy]"; \
         echo "server_list = automation_hub,galaxy"; \
@@ -222,19 +221,39 @@ RUN --mount=type=secret,id=rh_automation_hub_token,required=false \
     }; \
     case "${COLLECTION_PROFILE}" in \
       public) \
+        install_base=true; \
         install_certified_extra=false; \
+        require_certified_token=false; \
         ;; \
       certified) \
+        install_base=true; \
         install_certified_extra=true; \
+        require_certified_token=true; \
+        ;; \
+      bootstrap) \
+        install_base=false; \
+        install_certified_extra=false; \
+        require_certified_token=false; \
         ;; \
       *) \
-        echo "Invalid COLLECTION_PROFILE='${COLLECTION_PROFILE}' (use: public|certified)" >&2; \
+        echo "Invalid COLLECTION_PROFILE='${COLLECTION_PROFILE}' (use: public|certified|bootstrap)" >&2; \
         exit 1; \
         ;; \
     esac; \
-    install_with_retry galaxy_cmd collection install ${ANSIBLE_GALAXY_CLI_COLLECTION_OPTS} \
-      -r "${base_req_file}" \
-      --collections-path /usr/share/ansible/collections; \
+    if [[ "${require_certified_token}" == "true" ]]; then \
+      require_automation_hub_token; \
+    fi; \
+    if [[ "${install_base}" == "true" ]]; then \
+      if [[ ! -f "${base_req_file}" ]]; then \
+        echo "Base collections requirements file not found: ${base_req_file}" >&2; \
+        exit 1; \
+      fi; \
+      install_with_retry galaxy_cmd collection install ${ANSIBLE_GALAXY_CLI_COLLECTION_OPTS} \
+        -r "${base_req_file}" \
+        --collections-path /usr/share/ansible/collections; \
+    else \
+      echo "COLLECTION_PROFILE=bootstrap selected: skipping collections install"; \
+    fi; \
     if [[ "${install_certified_extra}" == "true" ]]; then \
       if [[ ! -f "${certified_extra_req_file}" ]]; then \
         echo "Certified extra requirements file not found: ${certified_extra_req_file}" >&2; \
@@ -287,6 +306,7 @@ RUN --mount=type=secret,id=rh_automation_hub_token,required=false \
       }; \
       case "${COLLECTION_PROFILE}" in \
         certified) \
+          install_controller_collections=true; \
           token_file="/run/secrets/rh_automation_hub_token"; \
           if [[ ! -s "${token_file}" ]]; then \
             echo "Missing required build secret for certified profile: rh_automation_hub_token" >&2; \
@@ -311,16 +331,24 @@ RUN --mount=type=secret,id=rh_automation_hub_token,required=false \
           } > /tmp/ansible-galaxy.cfg; \
           ;; \
         public) \
+          install_controller_collections=true; \
+          ;; \
+        bootstrap) \
+          install_controller_collections=false; \
           ;; \
         *) \
-          echo "Invalid COLLECTION_PROFILE='${COLLECTION_PROFILE}' (use: public|certified)" >&2; \
+          echo "Invalid COLLECTION_PROFILE='${COLLECTION_PROFILE}' (use: public|certified|bootstrap)" >&2; \
           exit 1; \
           ;; \
       esac; \
-      install_with_retry galaxy_cmd collection install ${ANSIBLE_GALAXY_CLI_COLLECTION_OPTS} \
-        -r /build/controller-requirements.yml \
-        --collections-path /usr/share/automation-controller/collections; \
-      galaxy_cmd collection list -p /usr/share/automation-controller/collections; \
+      if [[ "${install_controller_collections}" == "true" ]]; then \
+        install_with_retry galaxy_cmd collection install ${ANSIBLE_GALAXY_CLI_COLLECTION_OPTS} \
+          -r /build/controller-requirements.yml \
+          --collections-path /usr/share/automation-controller/collections; \
+        galaxy_cmd collection list -p /usr/share/automation-controller/collections; \
+      else \
+        echo "COLLECTION_PROFILE=bootstrap selected: skipping controller collections install"; \
+      fi; \
       rm -f /tmp/ansible-galaxy.cfg; \
     else \
       echo "No controller collections to install (collections/controller-requirements.yml empty or no valid entries). Skipping."; \
