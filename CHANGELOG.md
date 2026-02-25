@@ -1,3 +1,9 @@
+## [1.11.7](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.11.6...v1.11.7) (2026-02-25)
+
+### Bug Fixes
+
+* update renovate ([#103](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/103)) ([b16749c](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/b16749c6a280f5d4205ed1326572be5008c2ed7d))
+
 ## [1.11.6](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.11.5...v1.11.6) (2026-02-24)
 
 ### Bug Fixes

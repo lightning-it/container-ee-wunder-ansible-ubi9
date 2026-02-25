@@ -64,7 +64,7 @@ RUN python -m pip install --no-cache-dir --upgrade "pip==${PIP_VERSION}" && \
 ################################################################################
 # Terraform
 ################################################################################
-ARG TERRAFORM_VERSION=1.14.3
+ARG TERRAFORM_VERSION=1.14.5
 RUN set -euo pipefail; \
     arch="$(uname -m)"; \
     case "${arch}" in \
