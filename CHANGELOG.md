@@ -1,3 +1,9 @@
+## [1.12.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.11.8...v1.12.0) (2026-02-25)
+
+### Features
+
+* add support for bootstrap profile and RH Automation Hub token in CI/CD workflow ([#113](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/113)) ([c99c56f](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/c99c56f55fd8612e7d32af03a9ca5d3177d23b40))
+
 ## [1.11.8](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.11.7...v1.11.8) (2026-02-25)
 
 ### Bug Fixes
