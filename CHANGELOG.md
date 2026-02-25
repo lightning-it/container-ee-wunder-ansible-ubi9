@@ -1,3 +1,9 @@
+## [1.11.8](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.11.7...v1.11.8) (2026-02-25)
+
+### Bug Fixes
+
+* update dependency gruntwork-io/terragrunt to v0.99.4 ([#106](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/106)) ([521cefd](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/521cefd7212d83fa601153cb5c6bc672d9c328ac))
+
 ## [1.11.7](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.11.6...v1.11.7) (2026-02-25)
 
 ### Bug Fixes
