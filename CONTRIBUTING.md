@@ -58,6 +58,13 @@ A good PR:
 - Python 3.11+ (for pre-commit and local checks)
 - `pre-commit`
 
+### Renovate scope for certified collections
+
+`collections/requirements-certified-extra.yml` is intentionally not tracked by
+Renovate in this repository. Certified Automation Hub updates are handled
+manually or by dedicated CI automation due to auth-flow limitations in
+Mend-hosted Renovate for Red Hat offline tokens.
+
 ### Install pre-commit hooks
 
 ```bash
