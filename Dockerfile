@@ -50,7 +50,7 @@ RUN set -euo pipefail; \
 ################################################################################
 ARG PIP_TIMEOUT=120
 ARG PIP_RETRIES=5
-ARG PIP_VERSION=24.3.1
+ARG PIP_VERSION=26.0.1
 
 COPY requirements.txt /build/requirements.txt
 
@@ -113,7 +113,7 @@ PY
 ################################################################################
 # Helm
 ################################################################################
-ARG HELM_VERSION=3.20.0
+ARG HELM_VERSION=4.1.1
 RUN set -euo pipefail; \
     arch="$(uname -m)"; \
     case "${arch}" in \
