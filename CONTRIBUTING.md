@@ -58,12 +58,22 @@ A good PR:
 - Python 3.11+ (for pre-commit and local checks)
 - `pre-commit`
 
-### Renovate scope for certified collections
+### Renovate scope for certified RH collections
 
-`collections/requirements-certified-extra.yml` is intentionally not tracked by
-Renovate in this repository. Certified Automation Hub updates are handled
-manually or by dedicated CI automation due to auth-flow limitations in
-Mend-hosted Renovate for Red Hat offline tokens.
+For Red Hat Automation Hub certified collections, do not rely on Mend-hosted
+Renovate lookups when authentication is based on offline tokens.
+
+Reason:
+
+- Red Hat offline tokens require a refresh-token -> access-token exchange flow.
+- Renovate `galaxy-collection` lookups use direct HTTP auth and do not execute
+  this exchange flow in Mend-hosted mode.
+
+Policy:
+
+- Exclude `collections/requirements-certified-extra.yml` (or equivalent
+  certified-only requirement files) from Renovate checks/updates.
+- Manage certified collection versions with a controlled manual or CI workflow.
 
 ### Install pre-commit hooks
 
