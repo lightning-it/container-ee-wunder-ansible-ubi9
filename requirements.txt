@@ -39,3 +39,5 @@ certifi==2026.2.25
 PyYAML==6.0.3
 jmespath==1.1.0
 packaging==26.0
+dnspython==2.8.0
+netaddr==1.3.0

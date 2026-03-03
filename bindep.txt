@@ -1,4 +1,5 @@
 # common helpers
+nmstate
 sshpass
 tar
 unzip
