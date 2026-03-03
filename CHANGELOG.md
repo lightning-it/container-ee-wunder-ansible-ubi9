@@ -1,3 +1,9 @@
+## [1.12.2](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.12.1...v1.12.2) (2026-03-03)
+
+### Bug Fixes
+
+* needed for ocp install ([c84f56b](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/c84f56b9fee18991a7e1a920121808f4f03e5fb8))
+
 ## [1.12.1](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.12.0...v1.12.1) (2026-02-25)
 
 ### Bug Fixes
