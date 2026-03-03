@@ -41,3 +41,4 @@ jmespath==1.1.0
 packaging==26.0
 dnspython==2.8.0
 netaddr==1.3.0
+kubernetes==35.0.0
