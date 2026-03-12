@@ -1,9 +1,9 @@
 ---
 collections:
   - name: lit.foundational
-    version: "1.15.4"
+    version: "1.16.0"
   - name: lit.rhel
-    version: "1.9.7"
+    version: "1.10.0"
   - name: lit.supplementary
     version: "1.16.12"
   - name: lit.ocp
