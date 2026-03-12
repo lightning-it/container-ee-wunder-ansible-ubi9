@@ -1,3 +1,9 @@
+## [1.13.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.12.3...v1.13.0) (2026-03-12)
+
+### Features
+
+* update registry.access.redhat.com/ubi9/python-311 docker tag to v9.7-1773204149 ([#118](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/118)) ([8e91504](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/8e91504e7e94aec521ea528272c484a65937e52b))
+
 ## [1.12.3](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.12.2...v1.12.3) (2026-03-03)
 
 ### Bug Fixes
