@@ -1,3 +1,9 @@
+## [1.13.1](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.13.0...v1.13.1) (2026-03-19)
+
+### Bug Fixes
+
+* update dependency lit.supplementary to v1.18.0 ([#132](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/132)) ([61ddc42](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/61ddc4294fa3f4074836860903edc70512b2efbd))
+
 ## [1.13.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.12.3...v1.13.0) (2026-03-12)
 
 ### Features
