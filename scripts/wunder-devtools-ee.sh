@@ -3,9 +3,15 @@ set -euo pipefail
 
 IMAGE="quay.io/l-it/ee-wunder-devtools-ubi9:v1.8.2"
 CONTAINER_HOME="${CONTAINER_HOME:-/tmp/wunder}"
-HOST_HOME_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/wunder-devtools-ee/home"
+HOST_HOME_CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/wunder-devtools-ee/v2/home"
+HOST_HOME_CACHE_SCOPE="host-uid-$(id -u)"
+if [ "${WUNDER_DEVTOOLS_RUN_AS_HOST_UID:-0}" != "1" ]; then
+  HOST_HOME_CACHE_SCOPE="container-root"
+fi
+HOST_HOME_CACHE="${HOST_HOME_CACHE:-${HOST_HOME_CACHE_ROOT}/${HOST_HOME_CACHE_SCOPE}}"
 
 mkdir -p "$HOST_HOME_CACHE"
+chmod 700 "$HOST_HOME_CACHE" 2>/dev/null || true
 
 WORKSPACE_MOUNT="${PWD}:/workspace"
 HOME_CACHE_MOUNT="${HOST_HOME_CACHE}:${CONTAINER_HOME}"
