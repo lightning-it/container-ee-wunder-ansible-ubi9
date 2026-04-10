@@ -11,7 +11,7 @@ collections:
   - name: ansible.posix
     version: "2.1.0"
   - name: community.general
-    version: "11.4.5"
+    version: "11.4.6"
   - name: community.crypto
     version: "3.1.1"
   - name: community.hashi_vault
@@ -19,6 +19,6 @@ collections:
   - name: community.vmware
     version: "5.10.0"
   - name: containers.podman
-    version: "1.19.0"
+    version: "1.19.2"
   - name: fedora.linux_system_roles
     version: "1.121.0"
