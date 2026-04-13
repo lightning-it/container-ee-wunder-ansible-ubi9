@@ -1,3 +1,9 @@
+## [1.13.6](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.13.5...v1.13.6) (2026-04-13)
+
+### Bug Fixes
+
+* switch to helm v3 ([c1cd068](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/c1cd068d4547bf034901c50ea8ebc4e2239ac968))
+
 ## [1.13.5](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.13.4...v1.13.5) (2026-03-21)
 
 ### Bug Fixes
