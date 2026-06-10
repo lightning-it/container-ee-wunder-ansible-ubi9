@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.24
-FROM registry.access.redhat.com/ubi9/python-311:9.7-1775725322
+FROM registry.access.redhat.com/ubi9/python-311:9.8-1779945715
 
 LABEL maintainer="Lightning IT"
 LABEL org.opencontainers.image.title="ee-wunder-ansible-ubi9"
