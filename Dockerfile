@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.22
+# syntax=docker/dockerfile:1.24
 FROM registry.access.redhat.com/ubi9/python-311:9.7-1775725322
 
 LABEL maintainer="Lightning IT"
