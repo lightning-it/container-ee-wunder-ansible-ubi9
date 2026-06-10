@@ -68,7 +68,6 @@
       "datasourceTemplate": "github-releases",
       "depNameTemplate": "helm/helm",
       "extractVersionTemplate": "^v(?<version>[0-9.]+)$",
-      "allowedVersions": ">=3.0.0 <4.0.0",
       "versioningTemplate": "semver"
     },
     {
@@ -96,6 +95,13 @@
     }
   ],
   "packageRules": [
+    {
+      "description": "Keep Helm on 3.x",
+      "matchDepNames": [
+        "helm/helm"
+      ],
+      "allowedVersions": ">=3.0.0 <4.0.0"
+    },
     {
       "matchDepNames": [
         "ansible-core"
