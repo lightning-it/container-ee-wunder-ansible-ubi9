@@ -1,17 +1,17 @@
 ---
 collections:
   - name: lit.foundational
-    version: "1.17.1"
+    version: "1.17.2"
   - name: lit.rhel
     version: "1.13.1"
   - name: lit.supplementary
-    version: "1.18.5"
+    version: "1.18.9"
   - name: lit.ocp
     version: "1.3.13"
   - name: ansible.posix
     version: "2.1.0"
   - name: community.general
-    version: "11.4.6"
+    version: "11.4.8"
   - name: community.crypto
     version: "3.1.1"
   - name: community.hashi_vault
