@@ -1,3 +1,9 @@
+## [1.13.7](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.13.6...v1.13.7) (2026-06-10)
+
+### Bug Fixes
+
+* move allowedVersions from customManager to packageRules for Helm ([#148](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/148)) ([fe30123](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/fe30123eccb4b363d3a4b35fa01b882ef47bbf44))
+
 ## [1.13.6](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.13.5...v1.13.6) (2026-04-13)
 
 ### Bug Fixes
