@@ -1,3 +1,9 @@
+## [1.14.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.13.8...v1.14.0) (2026-06-12)
+
+### Features
+
+* update terraform monorepo to v1.15.6 ([#169](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/169)) ([2465d31](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/2465d31f625883055b39b6c9034e224800f0c7b3))
+
 ## [1.13.8](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.13.7...v1.13.8) (2026-06-10)
 
 ### Bug Fixes
