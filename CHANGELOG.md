@@ -1,3 +1,9 @@
+## [1.15.2](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.15.1...v1.15.2) (2026-06-15)
+
+### Bug Fixes
+
+* update ansible galaxy collections ([#179](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/179)) ([2204550](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/220455066113a3fe7493035c183e7a978b7213f7))
+
 ## [1.15.1](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.15.0...v1.15.1) (2026-06-14)
 
 ### Bug Fixes
