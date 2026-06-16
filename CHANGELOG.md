@@ -1,3 +1,9 @@
+## [1.17.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.16.4...v1.17.0) (2026-06-16)
+
+### Features
+
+* update versions of foundational, rhel, and supplementary collections ([#186](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/186)) ([c3edf3a](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/c3edf3abf0cb2fb9b7e4a66826a332a3ad520abf))
+
 ## [1.16.4](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.16.3...v1.16.4) (2026-06-16)
 
 ### Bug Fixes
