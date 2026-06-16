@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE="quay.io/l-it/ee-wunder-devtools-ubi9:v1.8.3"
+IMAGE="quay.io/l-it/ee-wunder-devtools-ubi9:v1.8.5"
 CONTAINER_HOME="${CONTAINER_HOME:-/tmp/wunder}"
 HOST_HOME_CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/wunder-devtools-ee/v2/home"
 HOST_HOME_CACHE_SCOPE="host-uid-$(id -u)"
@@ -69,8 +69,8 @@ case "$CONTAINER_BIN" in
 esac
 
 if [ "$CONTAINER_BIN" = "podman" ] && [ "$(uname -s)" = "Linux" ]; then
-  WORKSPACE_MOUNT="${WORKSPACE_MOUNT}:Z"
-  HOME_CACHE_MOUNT="${HOME_CACHE_MOUNT}:Z"
+  WORKSPACE_MOUNT="${WORKSPACE_MOUNT}:z"
+  HOME_CACHE_MOUNT="${HOME_CACHE_MOUNT}:z"
 fi
 
 DOCKER_ARGS+=(-v "$WORKSPACE_MOUNT")
