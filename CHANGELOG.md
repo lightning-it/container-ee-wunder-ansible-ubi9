@@ -1,3 +1,9 @@
+## [1.17.4](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.17.3...v1.17.4) (2026-06-18)
+
+### Bug Fixes
+
+* update ansible galaxy collections to v1.17.1 ([#195](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/195)) ([5ccb4f6](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/5ccb4f6ef5815f9bc927b54ab9df7fa2a12770d2))
+
 ## [1.17.3](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.17.2...v1.17.3) (2026-06-17)
 
 ### Bug Fixes
