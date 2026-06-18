@@ -30,7 +30,7 @@ pyvmomi==9.1.0.0
 requests==2.34.2
 urllib3==2.7.0
 cryptography==49.0.0
-certifi==2026.5.20
+certifi==2026.6.17
 
 # ---------------------------------------------------------------------------
 # Common parsing utilities used widely by Ansible plugins/collections
