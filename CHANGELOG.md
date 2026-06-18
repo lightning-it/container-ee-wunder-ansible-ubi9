@@ -1,3 +1,9 @@
+## [1.19.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.18.0...v1.19.0) (2026-06-18)
+
+### Features
+
+* Update lit.foundational version to 1.21.0 ([#198](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/198)) ([ad428b7](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/ad428b7fa891ea85b15f18efd519aa0403df0aa8))
+
 ## [1.18.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.17.4...v1.18.0) (2026-06-18)
 
 ### Features
