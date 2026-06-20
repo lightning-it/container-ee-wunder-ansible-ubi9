@@ -1,1 +1,8 @@
 ---
+roles:
+  - name: ansible-lockdown.rhel9_cis
+    version: "2.2.0"
+  - name: ansible-lockdown.rhel10_cis
+    version: "1.0.2"
+  - name: ansible-lockdown.ubuntu24_cis
+    version: "1.6.0"
