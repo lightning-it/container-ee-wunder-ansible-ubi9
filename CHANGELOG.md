@@ -1,3 +1,9 @@
+## [1.20.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.19.0...v1.20.0) (2026-06-20)
+
+### Features
+
+* add ansible lockdown roles for RHEL9, RHEL10, and Ubuntu 24 ([#203](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/issues/203)) ([c9b10c2](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/commit/c9b10c2001e63e4dce2a2a3d636c6044d50e7dce))
+
 ## [1.19.0](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/compare/v1.18.0...v1.19.0) (2026-06-18)
 
 ### Features
