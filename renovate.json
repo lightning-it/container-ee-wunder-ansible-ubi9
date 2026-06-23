@@ -7,7 +7,8 @@
     ":semanticCommitScope(deps)"
   ],
   "labels": [
-    "dependencies"
+    "dependencies",
+    "renovate"
   ],
   "prConcurrentLimit": 5,
   "rebaseWhen": "conflicted",
@@ -136,5 +137,8 @@
       "groupName": "ansible galaxy collections",
       "separateMinorPatch": true
     }
+  ],
+  "baseBranchPatterns": [
+    "develop"
   ]
 }
