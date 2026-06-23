@@ -10,7 +10,7 @@ ARG ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=
 ARG PKGMGR_OPTS="--nodocs --setopt=install_weak_deps=0 --setopt=*.module_hotfixes=1"
 ARG COLLECTION_PROFILE=public
 ARG AUTOMATION_HUB_URL="https://console.redhat.com/api/automation-hub/content/published/"
-ARG AUTOMATION_HUB_AUTH_URL="https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token"
+ARG AUTOMATION_HUB_SSO_URL="https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token"
 ARG ANSIBLE_GALAXY_INSTALL_RETRIES=5
 ARG ANSIBLE_GALAXY_RETRY_DELAY_SECONDS=10
 
@@ -22,10 +22,14 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # RPMs via bindep
 ################################################################################
 COPY bindep.txt /build/bindep.txt
+COPY scripts/container-download-verified.sh /usr/local/lib/container-download-verified.sh
+COPY scripts/install-galaxy-content.sh /usr/local/bin/install-galaxy-content
+COPY scripts/ee-entrypoint.sh /usr/local/bin/ee-entrypoint
 
 # hadolint ignore=SC2086
 RUN set -euo pipefail; \
     mapfile -t pkgs < <(grep -Ev '^\s*#|^\s*$' /build/bindep.txt | awk '{print $1}'); \
+    pkgs+=(ca-certificates nss_wrapper); \
     dnf -y update; \
     if (( ${#pkgs[@]} )); then \
       echo "Installing bindep RPMs: ${pkgs[*]}"; \
@@ -35,15 +39,8 @@ RUN set -euo pipefail; \
     fi; \
     dnf -y clean all; \
     rm -rf /var/cache/dnf /var/cache/yum; \
-    rm -f /build/bindep.txt
-
-################################################################################
-# NSS wrapper (fix host UID != image user, e.g. macOS uid 501)
-################################################################################
-RUN set -euo pipefail; \
-    dnf -y install ${PKGMGR_OPTS} nss_wrapper; \
-    dnf -y clean all; \
-    rm -rf /var/cache/dnf /var/cache/yum
+    rm -f /build/bindep.txt; \
+    chmod 0755 /usr/local/bin/install-galaxy-content /usr/local/bin/ee-entrypoint
 
 ################################################################################
 # Python deps via requirements.txt
@@ -66,6 +63,7 @@ RUN python -m pip install --no-cache-dir --upgrade "pip==${PIP_VERSION}" && \
 ################################################################################
 ARG TERRAFORM_VERSION=1.15.6
 RUN set -euo pipefail; \
+    source /usr/local/lib/container-download-verified.sh; \
     arch="$(uname -m)"; \
     case "${arch}" in \
       x86_64) tf_arch="amd64" ;; \
@@ -73,24 +71,21 @@ RUN set -euo pipefail; \
       *) echo "Unsupported arch: ${arch}" >&2; exit 1 ;; \
     esac; \
     tf_url="https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${tf_arch}.zip"; \
-    TF_URL="${tf_url}" python - <<'PY' && \
+    download_verified \
+      "${tf_url}" \
+      /tmp/terraform.zip \
+      "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_SHA256SUMS" \
+      "terraform_${TERRAFORM_VERSION}_linux_${tf_arch}.zip"; \
     unzip -q /tmp/terraform.zip -d /usr/local/bin && \
     rm -f /tmp/terraform.zip && \
     /usr/local/bin/terraform -version
-import os
-import urllib.request
-
-url = os.environ["TF_URL"]
-out_path = "/tmp/terraform.zip"
-with urllib.request.urlopen(url) as resp, open(out_path, "wb") as handle:
-    handle.write(resp.read())
-PY
 
 ################################################################################
 # Terragrunt
 ################################################################################
 ARG TERRAGRUNT_VERSION=1.0.8
 RUN set -euo pipefail; \
+    source /usr/local/lib/container-download-verified.sh; \
     arch="$(uname -m)"; \
     case "${arch}" in \
       x86_64) tg_arch="amd64" ;; \
@@ -98,23 +93,20 @@ RUN set -euo pipefail; \
       *) echo "Unsupported arch: ${arch}" >&2; exit 1 ;; \
     esac; \
     tg_url="https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/terragrunt_linux_${tg_arch}"; \
-    TG_URL="${tg_url}" python - <<'PY' && \
+    download_verified \
+      "${tg_url}" \
+      /usr/local/bin/terragrunt \
+      "https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/SHA256SUMS" \
+      "terragrunt_linux_${tg_arch}"; \
     chmod 0755 /usr/local/bin/terragrunt && \
     /usr/local/bin/terragrunt --version
-import os
-import urllib.request
-
-url = os.environ["TG_URL"]
-out_path = "/usr/local/bin/terragrunt"
-with urllib.request.urlopen(url) as resp, open(out_path, "wb") as handle:
-    handle.write(resp.read())
-PY
 
 ################################################################################
 # Helm
 ################################################################################
 ARG HELM_VERSION=3.21.2
 RUN set -euo pipefail; \
+    source /usr/local/lib/container-download-verified.sh; \
     arch="$(uname -m)"; \
     case "${arch}" in \
       x86_64) helm_arch="amd64" ;; \
@@ -122,19 +114,15 @@ RUN set -euo pipefail; \
       *) echo "Unsupported arch: ${arch}" >&2; exit 1 ;; \
     esac; \
     helm_url="https://get.helm.sh/helm-v${HELM_VERSION}-linux-${helm_arch}.tar.gz"; \
-    HELM_URL="${helm_url}" python - <<'PY' && \
+    download_verified \
+      "${helm_url}" \
+      /tmp/helm.tar.gz \
+      "https://get.helm.sh/helm-v${HELM_VERSION}-linux-${helm_arch}.tar.gz.sha256sum" \
+      "helm-v${HELM_VERSION}-linux-${helm_arch}.tar.gz"; \
     tar -xzf /tmp/helm.tar.gz -C /tmp && \
     install -m 0755 "/tmp/linux-${helm_arch}/helm" /usr/local/bin/helm && \
     rm -rf /tmp/helm.tar.gz "/tmp/linux-${helm_arch}" && \
     /usr/local/bin/helm version --short
-import os
-import urllib.request
-
-url = os.environ["HELM_URL"]
-out_path = "/tmp/helm.tar.gz"
-with urllib.request.urlopen(url) as resp, open(out_path, "wb") as handle:
-    handle.write(resp.read())
-PY
 
 ################################################################################
 # EE layout (AAP/Controller uses /runner)
@@ -169,228 +157,16 @@ WORKDIR /build
 COPY collections/requirements-base.yml /build/collections-requirements-base.yml
 COPY collections/requirements-certified-extra.yml /build/collections-requirements-certified-extra.yml
 RUN --mount=type=secret,id=rh_automation_hub_token,required=false \
-    set -euo pipefail; \
-    base_req_file="/build/collections-requirements-base.yml"; \
-    certified_extra_req_file="/build/collections-requirements-certified-extra.yml"; \
-    install_with_retry() { \
-      local attempts="${ANSIBLE_GALAXY_INSTALL_RETRIES}"; \
-      local delay="${ANSIBLE_GALAXY_RETRY_DELAY_SECONDS}"; \
-      local try=1; \
-      until "$@"; do \
-        if [[ "${try}" -ge "${attempts}" ]]; then \
-          return 1; \
-        fi; \
-        echo "ansible-galaxy failed (attempt ${try}/${attempts}); retrying in ${delay}s..."; \
-        sleep "${delay}"; \
-        try=$((try + 1)); \
-      done; \
-    }; \
-    galaxy_cmd() { \
-      if [[ -f /tmp/ansible-galaxy.cfg ]]; then \
-        ANSIBLE_CONFIG=/tmp/ansible-galaxy.cfg ansible-galaxy "$@"; \
-      else \
-        ansible-galaxy "$@"; \
-      fi; \
-    }; \
-    require_automation_hub_token() { \
-      token_file="/run/secrets/rh_automation_hub_token"; \
-      if [[ ! -s "${token_file}" ]]; then \
-        echo "Missing required build secret for certified profile: rh_automation_hub_token" >&2; \
-        exit 1; \
-      fi; \
-      token="$(tr -d '\r\n' < "${token_file}")"; \
-      if [[ -z "${token}" ]]; then \
-        echo "Build secret rh_automation_hub_token is empty" >&2; \
-        exit 1; \
-      fi; \
-    }; \
-    configure_automation_hub() { \
-      require_automation_hub_token; \
-      { \
-        echo "[galaxy]"; \
-        echo "server_list = automation_hub,galaxy"; \
-        echo; \
-        echo "[galaxy_server.automation_hub]"; \
-        echo "url=${AUTOMATION_HUB_URL}"; \
-        echo "auth_url=${AUTOMATION_HUB_AUTH_URL}"; \
-        echo "token=${token}"; \
-        echo; \
-        echo "[galaxy_server.galaxy]"; \
-        echo "url=https://galaxy.ansible.com/"; \
-      } > /tmp/ansible-galaxy.cfg; \
-    }; \
-    case "${COLLECTION_PROFILE}" in \
-      public) \
-        install_base=true; \
-        install_certified_extra=false; \
-        require_certified_token=false; \
-        ;; \
-      certified) \
-        install_base=true; \
-        install_certified_extra=true; \
-        require_certified_token=true; \
-        ;; \
-      bootstrap) \
-        install_base=false; \
-        install_certified_extra=false; \
-        require_certified_token=false; \
-        ;; \
-      *) \
-        echo "Invalid COLLECTION_PROFILE='${COLLECTION_PROFILE}' (use: public|certified|bootstrap)" >&2; \
-        exit 1; \
-        ;; \
-    esac; \
-    if [[ "${require_certified_token}" == "true" ]]; then \
-      require_automation_hub_token; \
-    fi; \
-    if [[ "${install_base}" == "true" ]]; then \
-      if [[ ! -f "${base_req_file}" ]]; then \
-        echo "Base collections requirements file not found: ${base_req_file}" >&2; \
-        exit 1; \
-      fi; \
-      install_with_retry galaxy_cmd collection install ${ANSIBLE_GALAXY_CLI_COLLECTION_OPTS} \
-        -r "${base_req_file}" \
-        --collections-path /usr/share/ansible/collections; \
-    else \
-      echo "COLLECTION_PROFILE=bootstrap selected: skipping collections install"; \
-    fi; \
-    if [[ "${install_certified_extra}" == "true" ]]; then \
-      if [[ ! -f "${certified_extra_req_file}" ]]; then \
-        echo "Certified extra requirements file not found: ${certified_extra_req_file}" >&2; \
-        exit 1; \
-      fi; \
-      configure_automation_hub; \
-      install_with_retry galaxy_cmd collection install ${ANSIBLE_GALAXY_CLI_COLLECTION_OPTS} \
-        -r "${certified_extra_req_file}" \
-        --collections-path /usr/share/ansible/collections; \
-    fi; \
-    galaxy_cmd collection list -p /usr/share/ansible/collections; \
-    rm -f /tmp/ansible-galaxy.cfg
+    install-galaxy-content collections
 
 # --- Roles (guarded) ---
 COPY roles/requirements.yml /build/roles-requirements.yml
-RUN set -euo pipefail; \
-    if grep -Eq '^[[:space:]]*-[[:space:]]*(src|name):' /build/roles-requirements.yml; then \
-      ansible-galaxy role install \
-        -r /build/roles-requirements.yml \
-        -p /usr/share/ansible/roles && \
-      ansible-galaxy role list -p /usr/share/ansible/roles; \
-    else \
-      echo "No roles to install (roles/requirements.yml empty or no valid entries). Skipping."; \
-    fi
+RUN install-galaxy-content roles
 
 # --- Controller Collections (guarded) ---
 COPY collections/controller-requirements.yml /build/controller-requirements.yml
 RUN --mount=type=secret,id=rh_automation_hub_token,required=false \
-    set -euo pipefail; \
-    if grep -Eq '^[[:space:]]*collections:[[:space:]]*$|^[[:space:]]*-[[:space:]]*name:' /build/controller-requirements.yml; then \
-      install_with_retry() { \
-        local attempts="${ANSIBLE_GALAXY_INSTALL_RETRIES}"; \
-        local delay="${ANSIBLE_GALAXY_RETRY_DELAY_SECONDS}"; \
-        local try=1; \
-        until "$@"; do \
-          if [[ "${try}" -ge "${attempts}" ]]; then \
-            return 1; \
-          fi; \
-          echo "ansible-galaxy failed (attempt ${try}/${attempts}); retrying in ${delay}s..."; \
-          sleep "${delay}"; \
-          try=$((try + 1)); \
-        done; \
-      }; \
-      galaxy_cmd() { \
-        if [[ -f /tmp/ansible-galaxy.cfg ]]; then \
-          ANSIBLE_CONFIG=/tmp/ansible-galaxy.cfg ansible-galaxy "$@"; \
-        else \
-          ansible-galaxy "$@"; \
-        fi; \
-      }; \
-      case "${COLLECTION_PROFILE}" in \
-        certified) \
-          install_controller_collections=true; \
-          token_file="/run/secrets/rh_automation_hub_token"; \
-          if [[ ! -s "${token_file}" ]]; then \
-            echo "Missing required build secret for certified profile: rh_automation_hub_token" >&2; \
-            exit 1; \
-          fi; \
-          token="$(tr -d '\r\n' < "${token_file}")"; \
-          if [[ -z "${token}" ]]; then \
-            echo "Build secret rh_automation_hub_token is empty" >&2; \
-            exit 1; \
-          fi; \
-          { \
-            echo "[galaxy]"; \
-            echo "server_list = automation_hub,galaxy"; \
-            echo; \
-            echo "[galaxy_server.automation_hub]"; \
-            echo "url=${AUTOMATION_HUB_URL}"; \
-            echo "auth_url=${AUTOMATION_HUB_AUTH_URL}"; \
-            echo "token=${token}"; \
-            echo; \
-            echo "[galaxy_server.galaxy]"; \
-            echo "url=https://galaxy.ansible.com/"; \
-          } > /tmp/ansible-galaxy.cfg; \
-          ;; \
-        public) \
-          install_controller_collections=true; \
-          ;; \
-        bootstrap) \
-          install_controller_collections=false; \
-          ;; \
-        *) \
-          echo "Invalid COLLECTION_PROFILE='${COLLECTION_PROFILE}' (use: public|certified|bootstrap)" >&2; \
-          exit 1; \
-          ;; \
-      esac; \
-      if [[ "${install_controller_collections}" == "true" ]]; then \
-        install_with_retry galaxy_cmd collection install ${ANSIBLE_GALAXY_CLI_COLLECTION_OPTS} \
-          -r /build/controller-requirements.yml \
-          --collections-path /usr/share/automation-controller/collections; \
-        galaxy_cmd collection list -p /usr/share/automation-controller/collections; \
-      else \
-        echo "COLLECTION_PROFILE=bootstrap selected: skipping controller collections install"; \
-      fi; \
-      rm -f /tmp/ansible-galaxy.cfg; \
-    else \
-      echo "No controller collections to install (collections/controller-requirements.yml empty or no valid entries). Skipping."; \
-    fi
-
-################################################################################
-# EntryPoint: create passwd/group for arbitrary UID (e.g. 501) via nss_wrapper
-################################################################################
-RUN cat > /usr/local/bin/ee-entrypoint <<'EOF' && chmod 0755 /usr/local/bin/ee-entrypoint
-#!/usr/bin/env bash
-set -euo pipefail
-
-# If no command is provided, fall back to bash
-if [ "$#" -eq 0 ]; then
-  set -- /bin/bash
-fi
-
-# If current UID has no passwd entry, ansible/ssh may fail ("No user exists for uid ...").
-# Use nss_wrapper to provide a synthetic passwd/group entry in /tmp.
-if ! whoami >/dev/null 2>&1; then
-  uid="$(id -u)"
-  gid="$(id -g)"
-  home="${HOME:-/tmp}"
-
-  export NSS_WRAPPER_PASSWD="${TMPDIR:-/tmp}/passwd.nss_wrapper"
-  export NSS_WRAPPER_GROUP="${TMPDIR:-/tmp}/group.nss_wrapper"
-
-  # Seed from existing files if readable; then append current uid/gid.
-  (cat /etc/passwd 2>/dev/null || true) > "${NSS_WRAPPER_PASSWD}"
-  echo "eeuser:x:${uid}:${gid}:EE User:${home}:/bin/bash" >> "${NSS_WRAPPER_PASSWD}"
-
-  (cat /etc/group 2>/dev/null || true) > "${NSS_WRAPPER_GROUP}"
-  echo "eegroup:x:${gid}:" >> "${NSS_WRAPPER_GROUP}"
-
-  wrapper="/usr/lib64/libnss_wrapper.so"
-  if [ -f "${wrapper}" ]; then
-    export LD_PRELOAD="${wrapper}${LD_PRELOAD:+:${LD_PRELOAD}}"
-  fi
-fi
-
-exec "$@"
-EOF
+    install-galaxy-content controller
 
 ################################################################################
 # Runtime user
