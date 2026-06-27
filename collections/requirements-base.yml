@@ -21,4 +21,4 @@ collections:
   - name: containers.podman
     version: "1.20.2"
   - name: fedora.linux_system_roles
-    version: "1.126.0"
+    version: "1.127.2"
