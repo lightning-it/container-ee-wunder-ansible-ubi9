@@ -115,7 +115,7 @@ jobs:
 
       - name: Build and push public image (amd64 + arm64)
         id: build_public
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
         with:
           context: .
           file: ./Dockerfile
@@ -142,7 +142,7 @@ jobs:
 
       - name: Build and push certified image (amd64 + arm64)
         id: build_certified
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
         with:
           context: .
           file: ./Dockerfile
@@ -171,7 +171,7 @@ jobs:
 
       - name: Build and push bootstrap image (amd64 + arm64)
         id: build_bootstrap
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
         with:
           context: .
           file: ./Dockerfile
