@@ -131,6 +131,16 @@
       "allowedVersions": "/^5\\.10\\.0$/"
     },
     {
+      "description": "Keep fedora.linux_system_roles below 1.127.x until its ansible.posix constraint supports 2.2.x",
+      "matchDepNames": [
+        "fedora.linux_system_roles"
+      ],
+      "matchDatasources": [
+        "galaxy-collection"
+      ],
+      "allowedVersions": "<1.127.0"
+    },
+    {
       "matchDatasources": [
         "galaxy-collection"
       ],
