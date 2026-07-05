@@ -116,12 +116,28 @@ jobs:
             COLLECTION_PROFILE=public
           tags: ${{ env.IMAGE_NAME_PUBLIC }}:trivy-${{ env.SHORT_SHA }}
 
-      - name: Run Trivy public release gate before Quay publish
+      - name: Generate Trivy public release gate SARIF
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME_PUBLIC }}:trivy-${{ env.SHORT_SHA }}
           format: sarif
           output: trivy-public-release-gate.sarif
+          vuln-type: os,library
+          ignore-unfixed: true
+          severity: CRITICAL
+          exit-code: "0"
+
+      - name: Upload Trivy public release gate SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-public-release-gate.sarif
+          category: trivy-public
+
+      - name: Run Trivy public release gate before Quay publish
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME_PUBLIC }}:trivy-${{ env.SHORT_SHA }}
+          format: table
           vuln-type: os,library
           ignore-unfixed: true
           severity: CRITICAL
@@ -141,12 +157,28 @@ jobs:
             rh_automation_hub_token=${{ secrets.RH_AUTOMATION_HUB_TOKEN }}
           tags: ${{ env.IMAGE_NAME_CERTIFIED }}:trivy-${{ env.SHORT_SHA }}
 
-      - name: Run Trivy certified release gate before Quay publish
+      - name: Generate Trivy certified release gate SARIF
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME_CERTIFIED }}:trivy-${{ env.SHORT_SHA }}
           format: sarif
           output: trivy-certified-release-gate.sarif
+          vuln-type: os,library
+          ignore-unfixed: true
+          severity: CRITICAL
+          exit-code: "0"
+
+      - name: Upload Trivy certified release gate SARIF
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-certified-release-gate.sarif
+          category: trivy-certified
+
+      - name: Run Trivy certified release gate before Quay publish
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME_CERTIFIED }}:trivy-${{ env.SHORT_SHA }}
+          format: table
           vuln-type: os,library
           ignore-unfixed: true
           severity: CRITICAL
@@ -164,7 +196,7 @@ jobs:
             COLLECTION_PROFILE=bootstrap
           tags: ${{ env.IMAGE_NAME_BOOTSTRAP }}:trivy-${{ env.SHORT_SHA }}
 
-      - name: Run Trivy bootstrap release gate before Quay publish
+      - name: Generate Trivy bootstrap release gate SARIF
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME_BOOTSTRAP }}:trivy-${{ env.SHORT_SHA }}
@@ -173,28 +205,23 @@ jobs:
           vuln-type: os,library
           ignore-unfixed: true
           severity: CRITICAL
-          exit-code: "1"
-
-      - name: Upload Trivy release gate SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: trivy-public-release-gate.sarif
-          category: trivy-public
-
-      - name: Upload Trivy certified release gate SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: trivy-certified-release-gate.sarif
-          category: trivy-certified
+          exit-code: "0"
 
       - name: Upload Trivy bootstrap release gate SARIF
-        if: always()
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-bootstrap-release-gate.sarif
           category: trivy-bootstrap
+
+      - name: Run Trivy bootstrap release gate before Quay publish
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME_BOOTSTRAP }}:trivy-${{ env.SHORT_SHA }}
+          format: table
+          vuln-type: os,library
+          ignore-unfixed: true
+          severity: CRITICAL
+          exit-code: "1"
 
       - name: Log in to Quay.io
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4
