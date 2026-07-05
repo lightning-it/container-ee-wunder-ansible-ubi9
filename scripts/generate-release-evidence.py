@@ -150,6 +150,7 @@ def main() -> int:
         "quay_status": os.getenv("QUAY_PUBLISH_STATUS", ""),
         "quay_image": os.getenv("QUAY_IMAGE", ""),
         "published_image_url": os.getenv("PUBLISHED_IMAGE_URL", ""),
+        "backmerge_status": os.getenv("BACKMERGE_STATUS", ""),
     }
 
     evidence = {
@@ -191,6 +192,11 @@ def main() -> int:
         "quay_repository": os.getenv("QUAY_REPOSITORY", str(meta.get("quay_repository", ""))),
         "quay_image": publish["quay_image"],
         "image_digest": os.getenv("IMAGE_DIGEST", ""),
+        "image_digests": csv_env("IMAGE_DIGESTS"),
+        "build_result": os.getenv("BUILD_RESULT", ""),
+        "smoke_test_result": tests["smoke_test_result"],
+        "publish_result": publish["status"],
+        "backmerge_status": publish["backmerge_status"],
         "base_image": os.getenv("BASE_IMAGE", ",".join(list_meta(meta, "supported_base_images"))),
         "build_context": os.getenv("BUILD_CONTEXT", str(meta.get("container_build_context", ""))),
         "containerfile": os.getenv("CONTAINERFILE", str(meta.get("containerfile", ""))),
@@ -237,6 +243,11 @@ def main() -> int:
         f"- Container image tags: `{', '.join(evidence['container_image_tags']) or 'not applicable'}`",
         f"- Quay.io image: `{evidence['quay_image'] or 'not applicable'}`",
         f"- Image digest: `{evidence['image_digest'] or 'not recorded'}`",
+        f"- Image digests: `{', '.join(evidence['image_digests']) or 'not recorded'}`",
+        f"- Build result: `{evidence['build_result'] or 'not recorded'}`",
+        f"- Smoke test result: `{evidence['smoke_test_result'] or 'not recorded'}`",
+        f"- Publish result: `{evidence['publish_result'] or 'not recorded'}`",
+        f"- Backmerge status: `{evidence['backmerge_status'] or 'pending after release'}`",
         f"- Ansible Galaxy artifact: `{evidence['ansible_galaxy_artifact'] or 'not applicable'}`",
         f"- Ansible Galaxy version: {evidence['ansible_galaxy_version_url'] or 'not recorded'}",
         f"- Changelog: {evidence['changelog'] or 'not recorded'}",

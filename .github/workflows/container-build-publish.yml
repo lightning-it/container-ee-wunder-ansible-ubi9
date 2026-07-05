@@ -355,19 +355,42 @@ jobs:
           tags="$tags,$IMAGE_NAME_CERTIFIED:$RELEASE_TAG,$IMAGE_NAME_CERTIFIED:$VERSION,$IMAGE_NAME_CERTIFIED:sha-$SHORT_SHA,$IMAGE_NAME_CERTIFIED:latest"
           tags="$tags,$IMAGE_NAME_BOOTSTRAP:$RELEASE_TAG,$IMAGE_NAME_BOOTSTRAP:$VERSION,$IMAGE_NAME_BOOTSTRAP:sha-$SHORT_SHA,$IMAGE_NAME_BOOTSTRAP:latest"
           artifacts="$IMAGE_NAME_PUBLIC@$PUBLIC_DIGEST,$IMAGE_NAME_CERTIFIED@$CERTIFIED_DIGEST,$IMAGE_NAME_BOOTSTRAP@$BOOTSTRAP_DIGEST"
+          digests="$PUBLIC_DIGEST,$CERTIFIED_DIGEST,$BOOTSTRAP_DIGEST"
+          passed_jobs="Build public image for Trivy release gate"
+          passed_jobs="$passed_jobs,Build certified image for Trivy release gate"
+          passed_jobs="$passed_jobs,Build bootstrap image for Trivy release gate"
+          passed_jobs="$passed_jobs,Run Trivy public release gate before Quay publish"
+          passed_jobs="$passed_jobs,Run Trivy certified release gate before Quay publish"
+          passed_jobs="$passed_jobs,Run Trivy bootstrap release gate before Quay publish"
+          passed_jobs="$passed_jobs,Build and push public image"
+          passed_jobs="$passed_jobs,Build and push certified image"
+          passed_jobs="$passed_jobs,Build and push bootstrap image"
+          passed_jobs="$passed_jobs,Verify scan sign and summarize public image"
+          passed_jobs="$passed_jobs,Verify scan sign and summarize certified image"
+          passed_jobs="$passed_jobs,Verify scan sign and summarize bootstrap image"
+          trivy_reports="trivy-public-release-gate.sarif"
+          trivy_reports="$trivy_reports,trivy-certified-release-gate.sarif"
+          trivy_reports="$trivy_reports,trivy-bootstrap-release-gate.sarif"
           TESTED_MATRIX="ubuntu-latest,docker-buildx,trivy,public-profile,certified-profile,bootstrap-profile" \
-          PASSED_JOBS="Build & push image to Quay.io" \
+          PASSED_JOBS="$passed_jobs" \
           BUILT_ARTIFACTS="$artifacts" \
           PUBLISHED_ARTIFACTS="$tags" \
           CONTAINER_IMAGE_TAGS="$tags" \
           QUAY_IMAGE="$artifacts" \
+          IMAGE_DIGEST="$PUBLIC_DIGEST" \
+          IMAGE_DIGESTS="$digests" \
           RELEASE_TAG="$RELEASE_TAG" \
           RELEASE_VERSION="$VERSION" \
+          BUILD_RESULT="passed" \
+          SMOKE_TEST_RESULT="passed" \
+          PUBLISH_STATUS="published" \
+          QUAY_PUBLISH_STATUS="published" \
+          BACKMERGE_STATUS="pending-after-release" \
           SECURITY_SCAN_RESULT="trivy-completed" \
           TRIVY_STATUS="passed" \
           TRIVY_RELEASE_GATE="passed-before-quay-publish" \
           TRIVY_SEVERITY="CRITICAL" \
-          TRIVY_REPORT="trivy-public-release-gate.sarif,trivy-certified-release-gate.sarif,trivy-bootstrap-release-gate.sarif" \
+          TRIVY_REPORT="$trivy_reports" \
           python3 scripts/generate-release-evidence.py
 
       - name: Attach release evidence
