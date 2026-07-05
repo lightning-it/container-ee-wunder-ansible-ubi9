@@ -117,7 +117,7 @@ jobs:
           tags: ${{ env.IMAGE_NAME_PUBLIC }}:trivy-${{ env.SHORT_SHA }}
 
       - name: Run Trivy public release gate before Quay publish
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME_PUBLIC }}:trivy-${{ env.SHORT_SHA }}
           format: sarif
@@ -142,7 +142,7 @@ jobs:
           tags: ${{ env.IMAGE_NAME_CERTIFIED }}:trivy-${{ env.SHORT_SHA }}
 
       - name: Run Trivy certified release gate before Quay publish
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME_CERTIFIED }}:trivy-${{ env.SHORT_SHA }}
           format: sarif
@@ -165,7 +165,7 @@ jobs:
           tags: ${{ env.IMAGE_NAME_BOOTSTRAP }}:trivy-${{ env.SHORT_SHA }}
 
       - name: Run Trivy bootstrap release gate before Quay publish
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME_BOOTSTRAP }}:trivy-${{ env.SHORT_SHA }}
           format: sarif
