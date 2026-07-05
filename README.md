@@ -1,5 +1,31 @@
 # ee-wunder-ansible-ubi9
 
+<!-- BEGIN LIT_SHARED_RELEASE_MODEL -->
+
+[![CI](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/actions/workflows/container-ci.yml/badge.svg?branch=develop)](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/actions/workflows/container-ci.yml)
+[![Release](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/actions/workflows/container-build-publish.yml/badge.svg?branch=main)](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/actions/workflows/container-build-publish.yml)
+[![Quay.io](https://img.shields.io/badge/quay.io-ee-wunder-ansible-ubi9-blue)](https://quay.io/organization/l-it)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
+## Release and Quality Model
+
+This repository follows the Lightning IT shared release and quality model.
+
+See [RELEASE.md](./RELEASE.md) for:
+
+- branch and release flow
+- required quality checks
+- test matrix
+- release evidence
+- artifact publishing
+- supported repository-specific release behavior
+
+Repository classification: **Container Image**.
+Required test profiles: `pre-commit, lint, container-build, container-smoke, trivy, release-validation`.
+Publishing targets: `github-release, quay.io`.
+
+<!-- END LIT_SHARED_RELEASE_MODEL -->
+
 Ansible Execution Environment (UBI 9, Python 3.11) with a multi-profile publish model:
 
 - `ee-wunder-ansible-ubi9`: public Galaxy content profile
