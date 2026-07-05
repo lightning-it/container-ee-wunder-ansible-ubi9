@@ -8,12 +8,16 @@ on:
 
 permissions:
   contents: read
-  id-token: write
+  security-events: write
 
 jobs:
   build:
     name: Build & push image to Quay.io
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      security-events: write
     env:
       REGISTRY: quay.io
 
@@ -98,13 +102,135 @@ jobs:
           echo "Using SHORT_SHA=${short_sha}"
 
       - name: Set up QEMU (multi-arch)
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8  # v4
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3  # v4
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4
+
+      - name: Build public image for Trivy release gate
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          platforms: linux/amd64
+          build-args: |
+            COLLECTION_PROFILE=public
+          tags: ${{ env.IMAGE_NAME_PUBLIC }}:trivy-${{ env.SHORT_SHA }}
+
+      - name: Generate Trivy public release gate SARIF
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME_PUBLIC }}:trivy-${{ env.SHORT_SHA }}
+          format: sarif
+          output: trivy-public-release-gate.sarif
+          vuln-type: os,library
+          ignore-unfixed: true
+          severity: CRITICAL
+          exit-code: "0"
+
+      - name: Upload Trivy public release gate SARIF
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-public-release-gate.sarif
+          category: trivy-public
+
+      - name: Run Trivy public release gate before Quay publish
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME_PUBLIC }}:trivy-${{ env.SHORT_SHA }}
+          format: table
+          vuln-type: os,library
+          ignore-unfixed: true
+          severity: CRITICAL
+          exit-code: "1"
+
+      - name: Build certified image for Trivy release gate
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          platforms: linux/amd64
+          build-args: |
+            COLLECTION_PROFILE=certified
+          secrets: |
+            rh_automation_hub_token=${{ secrets.RH_AUTOMATION_HUB_TOKEN }}
+          tags: ${{ env.IMAGE_NAME_CERTIFIED }}:trivy-${{ env.SHORT_SHA }}
+
+      - name: Generate Trivy certified release gate SARIF
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME_CERTIFIED }}:trivy-${{ env.SHORT_SHA }}
+          format: sarif
+          output: trivy-certified-release-gate.sarif
+          vuln-type: os,library
+          ignore-unfixed: true
+          severity: CRITICAL
+          exit-code: "0"
+
+      - name: Upload Trivy certified release gate SARIF
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-certified-release-gate.sarif
+          category: trivy-certified
+
+      - name: Run Trivy certified release gate before Quay publish
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME_CERTIFIED }}:trivy-${{ env.SHORT_SHA }}
+          format: table
+          vuln-type: os,library
+          ignore-unfixed: true
+          severity: CRITICAL
+          exit-code: "1"
+
+      - name: Build bootstrap image for Trivy release gate
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          platforms: linux/amd64
+          build-args: |
+            COLLECTION_PROFILE=bootstrap
+          tags: ${{ env.IMAGE_NAME_BOOTSTRAP }}:trivy-${{ env.SHORT_SHA }}
+
+      - name: Generate Trivy bootstrap release gate SARIF
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME_BOOTSTRAP }}:trivy-${{ env.SHORT_SHA }}
+          format: sarif
+          output: trivy-bootstrap-release-gate.sarif
+          vuln-type: os,library
+          ignore-unfixed: true
+          severity: CRITICAL
+          exit-code: "0"
+
+      - name: Upload Trivy bootstrap release gate SARIF
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-bootstrap-release-gate.sarif
+          category: trivy-bootstrap
+
+      - name: Run Trivy bootstrap release gate before Quay publish
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME_BOOTSTRAP }}:trivy-${{ env.SHORT_SHA }}
+          format: table
+          vuln-type: os,library
+          ignore-unfixed: true
+          severity: CRITICAL
+          exit-code: "1"
 
       - name: Log in to Quay.io
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0  # v4
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.QUAY_USERNAME }}
@@ -115,7 +241,7 @@ jobs:
 
       - name: Build and push public image (amd64 + arm64)
         id: build_public
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
         with:
           context: .
           file: ./Dockerfile
@@ -142,7 +268,7 @@ jobs:
 
       - name: Build and push certified image (amd64 + arm64)
         id: build_certified
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
         with:
           context: .
           file: ./Dockerfile
@@ -171,7 +297,7 @@ jobs:
 
       - name: Build and push bootstrap image (amd64 + arm64)
         id: build_bootstrap
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
         with:
           context: .
           file: ./Dockerfile
@@ -216,3 +342,50 @@ jobs:
           IMAGE_NAME: ${{ env.IMAGE_NAME_BOOTSTRAP }}
           IMAGE_DIGEST: ${{ steps.build_bootstrap.outputs.digest }}
         run: bash scripts/devtools-container-release-verify.sh
+
+      - name: Generate release evidence
+        shell: bash
+        env:
+          PUBLIC_DIGEST: ${{ steps.build_public.outputs.digest }}
+          CERTIFIED_DIGEST: ${{ steps.build_certified.outputs.digest }}
+          BOOTSTRAP_DIGEST: ${{ steps.build_bootstrap.outputs.digest }}
+        run: |
+          set -euo pipefail
+          tags="$IMAGE_NAME_PUBLIC:$RELEASE_TAG,$IMAGE_NAME_PUBLIC:$VERSION,$IMAGE_NAME_PUBLIC:sha-$SHORT_SHA,$IMAGE_NAME_PUBLIC:latest"
+          tags="$tags,$IMAGE_NAME_CERTIFIED:$RELEASE_TAG,$IMAGE_NAME_CERTIFIED:$VERSION,$IMAGE_NAME_CERTIFIED:sha-$SHORT_SHA,$IMAGE_NAME_CERTIFIED:latest"
+          tags="$tags,$IMAGE_NAME_BOOTSTRAP:$RELEASE_TAG,$IMAGE_NAME_BOOTSTRAP:$VERSION,$IMAGE_NAME_BOOTSTRAP:sha-$SHORT_SHA,$IMAGE_NAME_BOOTSTRAP:latest"
+          artifacts="$IMAGE_NAME_PUBLIC@$PUBLIC_DIGEST,$IMAGE_NAME_CERTIFIED@$CERTIFIED_DIGEST,$IMAGE_NAME_BOOTSTRAP@$BOOTSTRAP_DIGEST"
+          TESTED_MATRIX="ubuntu-latest,docker-buildx,trivy,public-profile,certified-profile,bootstrap-profile" \
+          PASSED_JOBS="Build & push image to Quay.io" \
+          BUILT_ARTIFACTS="$artifacts" \
+          PUBLISHED_ARTIFACTS="$tags" \
+          CONTAINER_IMAGE_TAGS="$tags" \
+          QUAY_IMAGE="$artifacts" \
+          RELEASE_TAG="$RELEASE_TAG" \
+          RELEASE_VERSION="$VERSION" \
+          SECURITY_SCAN_RESULT="trivy-completed" \
+          TRIVY_STATUS="passed" \
+          TRIVY_RELEASE_GATE="passed-before-quay-publish" \
+          TRIVY_SEVERITY="CRITICAL" \
+          TRIVY_REPORT="trivy-public-release-gate.sarif,trivy-certified-release-gate.sarif,trivy-bootstrap-release-gate.sarif" \
+          python3 scripts/generate-release-evidence.py
+
+      - name: Attach release evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            dist/release-evidence.json \
+            dist/release-evidence.md \
+            --clobber
+
+      - name: Upload release evidence artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: release-evidence
+          path: |
+            dist/release-evidence.json
+            dist/release-evidence.md
+          if-no-files-found: ignore
