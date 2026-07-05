@@ -9,6 +9,7 @@ on:
 permissions:
   contents: write
   id-token: write
+  security-events: write
 
 jobs:
   build:
@@ -102,6 +103,98 @@ jobs:
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4
+
+      - name: Build public image for Trivy release gate
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          platforms: linux/amd64
+          build-args: |
+            COLLECTION_PROFILE=public
+          tags: ${{ env.IMAGE_NAME_PUBLIC }}:trivy-${{ env.SHORT_SHA }}
+
+      - name: Run Trivy public release gate before Quay publish
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME_PUBLIC }}:trivy-${{ env.SHORT_SHA }}
+          format: sarif
+          output: trivy-public-release-gate.sarif
+          vuln-type: os,library
+          ignore-unfixed: true
+          severity: CRITICAL
+          exit-code: "1"
+
+      - name: Build certified image for Trivy release gate
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          platforms: linux/amd64
+          build-args: |
+            COLLECTION_PROFILE=certified
+          secrets: |
+            rh_automation_hub_token=${{ secrets.RH_AUTOMATION_HUB_TOKEN }}
+          tags: ${{ env.IMAGE_NAME_CERTIFIED }}:trivy-${{ env.SHORT_SHA }}
+
+      - name: Run Trivy certified release gate before Quay publish
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME_CERTIFIED }}:trivy-${{ env.SHORT_SHA }}
+          format: sarif
+          output: trivy-certified-release-gate.sarif
+          vuln-type: os,library
+          ignore-unfixed: true
+          severity: CRITICAL
+          exit-code: "1"
+
+      - name: Build bootstrap image for Trivy release gate
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          platforms: linux/amd64
+          build-args: |
+            COLLECTION_PROFILE=bootstrap
+          tags: ${{ env.IMAGE_NAME_BOOTSTRAP }}:trivy-${{ env.SHORT_SHA }}
+
+      - name: Run Trivy bootstrap release gate before Quay publish
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME_BOOTSTRAP }}:trivy-${{ env.SHORT_SHA }}
+          format: sarif
+          output: trivy-bootstrap-release-gate.sarif
+          vuln-type: os,library
+          ignore-unfixed: true
+          severity: CRITICAL
+          exit-code: "1"
+
+      - name: Upload Trivy release gate SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-public-release-gate.sarif
+          category: trivy-public
+
+      - name: Upload Trivy certified release gate SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-certified-release-gate.sarif
+          category: trivy-certified
+
+      - name: Upload Trivy bootstrap release gate SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-bootstrap-release-gate.sarif
+          category: trivy-bootstrap
 
       - name: Log in to Quay.io
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4
@@ -238,6 +331,10 @@ jobs:
           RELEASE_TAG="$RELEASE_TAG" \
           RELEASE_VERSION="$VERSION" \
           SECURITY_SCAN_RESULT="trivy-completed" \
+          TRIVY_STATUS="passed" \
+          TRIVY_RELEASE_GATE="passed-before-quay-publish" \
+          TRIVY_SEVERITY="CRITICAL" \
+          TRIVY_REPORT="trivy-public-release-gate.sarif,trivy-certified-release-gate.sarif,trivy-bootstrap-release-gate.sarif" \
           python3 scripts/generate-release-evidence.py
 
       - name: Attach release evidence
