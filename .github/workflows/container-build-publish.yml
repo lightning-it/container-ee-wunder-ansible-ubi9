@@ -105,7 +105,7 @@ jobs:
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4
 
       - name: Build public image for Trivy release gate
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
         with:
           context: .
           file: ./Dockerfile
@@ -128,6 +128,7 @@ jobs:
           exit-code: "0"
 
       - name: Upload Trivy public release gate SARIF
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-public-release-gate.sarif
@@ -144,7 +145,7 @@ jobs:
           exit-code: "1"
 
       - name: Build certified image for Trivy release gate
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
         with:
           context: .
           file: ./Dockerfile
@@ -169,6 +170,7 @@ jobs:
           exit-code: "0"
 
       - name: Upload Trivy certified release gate SARIF
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-certified-release-gate.sarif
@@ -185,7 +187,7 @@ jobs:
           exit-code: "1"
 
       - name: Build bootstrap image for Trivy release gate
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
         with:
           context: .
           file: ./Dockerfile
@@ -208,6 +210,7 @@ jobs:
           exit-code: "0"
 
       - name: Upload Trivy bootstrap release gate SARIF
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-bootstrap-release-gate.sarif
@@ -235,7 +238,7 @@ jobs:
 
       - name: Build and push public image (amd64 + arm64)
         id: build_public
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
         with:
           context: .
           file: ./Dockerfile
@@ -262,7 +265,7 @@ jobs:
 
       - name: Build and push certified image (amd64 + arm64)
         id: build_certified
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
         with:
           context: .
           file: ./Dockerfile
@@ -291,7 +294,7 @@ jobs:
 
       - name: Build and push bootstrap image (amd64 + arm64)
         id: build_bootstrap
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
         with:
           context: .
           file: ./Dockerfile
