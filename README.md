@@ -1,5 +1,17 @@
 # ee-wunder-ansible-ubi9
 
+<!-- BEGIN LIT_QUALITY_BADGES -->
+
+[![CI](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/actions/workflows/container-ci.yml/badge.svg?branch=develop)](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/actions/workflows/container-ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/lightning-it/container-ee-wunder-ansible-ubi9?sort=semver)](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/releases/latest)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/lightning-it/container-ee-wunder-ansible-ubi9/badge)](https://scorecard.dev/viewer/?uri=github.com/lightning-it/container-ee-wunder-ansible-ubi9)
+[![Container Version](https://img.shields.io/github/v/release/lightning-it/container-ee-wunder-ansible-ubi9?sort=semver&label=Container%20Version)](https://quay.io/repository/l-it/ee-wunder-ansible-ubi9)
+[![Trivy](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/actions/workflows/container-trivy.yml/badge.svg?branch=develop)](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/actions/workflows/container-trivy.yml)
+[![Container Build](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/actions/workflows/container-build.yml/badge.svg?branch=develop)](https://github.com/lightning-it/container-ee-wunder-ansible-ubi9/actions/workflows/container-build.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
+<!-- END LIT_QUALITY_BADGES -->
+
 Ansible Execution Environment (UBI 9, Python 3.11) with a multi-profile publish model:
 
 - `ee-wunder-ansible-ubi9`: public Galaxy content profile
@@ -105,3 +117,64 @@ docker buildx build \
 ## Runtime note
 
 For disconnected execution, preload/mirror the selected EE image and use it explicitly in runtime wrappers (for example `ANSIBLE_TOOLBOX_NAV_EE_IMAGE=<image:tag>`).
+
+## Security
+
+See [SECURITY.md](./SECURITY.md) for supported versions and vulnerability reporting.
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for contribution and review expectations.
+
+## License
+
+See [LICENSE](./LICENSE).
+
+<!-- BEGIN LIT_RELEASE_QUALITY_MODEL -->
+
+## Release and Quality Model
+
+This repository follows the Lightning IT shared release and quality model.
+The README shows the current supported and tested matrix.
+Exact per-version validation proof is stored with each GitHub Release as `release-evidence.md` and `release-evidence.json`.
+Releases are created from the protected `main` branch after a reviewed `develop -> main` release promotion.
+Container releases validate build, smoke behavior, Trivy scanning, and Quay.io publishing where enabled.
+
+See:
+
+- [RELEASE.md](./RELEASE.md)
+- [TESTING.md](./TESTING.md)
+- [GitHub Releases](../../releases)
+
+Repository classification: **Container Image**.
+Required test profiles: `pre-commit, lint, container-build, container-smoke, trivy, release-validation`.
+Publishing targets: `github-release, quay.io`.
+
+<!-- END LIT_RELEASE_QUALITY_MODEL -->
+
+<!-- BEGIN LIT_COMPATIBILITY_MATRIX -->
+
+## Compatibility Matrix
+
+| Image Version | Base Image | Runtime | Validation |
+|---|---|---|---|
+| Latest release | ubi9 | Podman / GitHub Actions | See release evidence |
+| Latest release | podman | Podman / GitHub Actions | See release evidence |
+| Latest release | docker-buildx | Podman / GitHub Actions | See release evidence |
+
+Validation proof for each released version is stored in the corresponding GitHub Release evidence.
+
+<!-- END LIT_COMPATIBILITY_MATRIX -->
+
+## Release Evidence
+
+Every released version includes immutable release evidence attached to the corresponding GitHub Release.
+The evidence records:
+
+- tested matrix combinations
+- GitHub Actions run links
+- artifact references
+- publish status
+- security scan status
+
+See [GitHub Releases](../../releases), [RELEASE.md](./RELEASE.md), and [TESTING.md](./TESTING.md) for the release process and validation model.
