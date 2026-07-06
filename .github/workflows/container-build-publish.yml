@@ -402,33 +402,21 @@ jobs:
           BOOTSTRAP_DIGEST: ${{ steps.build_bootstrap.outputs.digest }}
         run: |
           set -euo pipefail
-          mkdir -p dist
-          cat > dist/release-provenance.json <<EOF
-          {
-            "repository": "${GITHUB_REPOSITORY}",
-            "release": "${RELEASE_TAG}",
-            "version": "${VERSION}",
-            "commit": "${FULL_SHA}",
-            "images": [
-              "${IMAGE_NAME_PUBLIC}@${PUBLIC_DIGEST}",
-              "${IMAGE_NAME_CERTIFIED}@${CERTIFIED_DIGEST}",
-              "${IMAGE_NAME_BOOTSTRAP}@${BOOTSTRAP_DIGEST}"
-            ],
-            "workflow": "${GITHUB_WORKFLOW}",
-            "run_id": "${GITHUB_RUN_ID}",
-            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
-          }
-          EOF
+          artifacts="$IMAGE_NAME_PUBLIC@$PUBLIC_DIGEST,$IMAGE_NAME_CERTIFIED@$CERTIFIED_DIGEST,$IMAGE_NAME_BOOTSTRAP@$BOOTSTRAP_DIGEST"
+          python3 scripts/generate-release-provenance.py \
+            --mode workflow-release \
+            --release-tag "$RELEASE_TAG" \
+            --commit "$FULL_SHA" \
+            --subject dist/release-evidence.json \
+            --subject dist/release-evidence.md \
+            --artifact "$artifacts"
 
       - name: Sign release evidence assets
         shell: bash
         run: |
           set -euo pipefail
           cd dist
-          sha256sum release-evidence.json release-evidence.md release-provenance.json > SHA256SUMS
-          cosign sign-blob --yes --bundle release-evidence.json.sigstore.json release-evidence.json
-          cosign sign-blob --yes --bundle release-evidence.md.sigstore.json release-evidence.md
-          cosign sign-blob --yes --bundle release-provenance.json.sigstore.json release-provenance.json
+          sha256sum release-evidence.json release-evidence.md release-provenance.intoto.jsonl > SHA256SUMS
           cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
 
       - name: Upload release evidence artifact
@@ -439,9 +427,9 @@ jobs:
           path: |
             dist/release-evidence.json
             dist/release-evidence.md
-            dist/release-provenance.json
+            dist/release-provenance.intoto.jsonl
             dist/SHA256SUMS
-            dist/*.sigstore.json
+            dist/SHA256SUMS.sigstore.json
           if-no-files-found: ignore
 
   upload-trivy-sarif:
@@ -451,7 +439,7 @@ jobs:
     if: always()
     permissions:
       actions: read
-      contents: read
+      contents: write
       security-events: write
 
     steps:
@@ -532,7 +520,7 @@ jobs:
           gh release upload "${{ github.event.release.tag_name }}" \
             dist/release-evidence.json \
             dist/release-evidence.md \
-            dist/release-provenance.json \
+            dist/release-provenance.intoto.jsonl \
             dist/SHA256SUMS \
-            dist/*.sigstore.json \
+            dist/SHA256SUMS.sigstore.json \
             --clobber
