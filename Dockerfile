@@ -43,7 +43,7 @@ RUN set -euo pipefail; \
     chmod 0755 /usr/local/bin/install-galaxy-content /usr/local/bin/ee-entrypoint
 
 ################################################################################
-# Python deps via requirements.txt
+# Python deps via hash-pinned requirements.lock
 ################################################################################
 ARG PIP_TIMEOUT=120
 ARG PIP_RETRIES=5
