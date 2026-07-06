@@ -22,6 +22,6 @@
     "js-yaml": "5.2.1",
     "npm": "11.18.0",
     "@isaacs/brace-expansion": "5.0.1",
-    "picomatch": "4.0.4"
+    "picomatch": "4.0.5"
   }
 }
