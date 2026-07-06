@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.25
-FROM registry.access.redhat.com/ubi9/python-311:9.8-1779945715
+FROM registry.access.redhat.com/ubi9/python-311:9.8-1779945715@sha256:a0bdb55576fc5b8d6704279307817828ef027e1065533ceba133fe9516003a6c
 
 LABEL maintainer="Lightning IT"
 LABEL org.opencontainers.image.title="ee-wunder-ansible-ubi9"
@@ -50,12 +50,13 @@ ARG PIP_RETRIES=5
 ARG PIP_VERSION=26.1.2
 
 COPY requirements.txt /build/requirements.txt
+COPY requirements.lock /build/requirements.lock
 
 RUN python -m pip install --no-cache-dir --upgrade "pip==${PIP_VERSION}" && \
     python -m pip install --no-cache-dir \
       --timeout "${PIP_TIMEOUT}" --retries "${PIP_RETRIES}" \
-      -r /build/requirements.txt && \
-    rm -f /build/requirements.txt && \
+      --require-hashes -r /build/requirements.lock && \
+    rm -f /build/requirements.txt /build/requirements.lock && \
     ansible --version && ansible-galaxy --version && ansible-runner --version
 
 ################################################################################
