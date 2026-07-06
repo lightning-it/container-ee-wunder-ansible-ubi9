@@ -1,4 +1,4 @@
-# yamllint disable rule:truthy
+# yamllint disable rule:truthy rule:line-length
 ---
 name: Container Build & Publish
 
@@ -8,14 +8,13 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   build:
     name: Build & push image to Quay.io
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       id-token: write
       security-events: write
     env:
@@ -120,7 +119,7 @@ jobs:
           tags: ${{ env.IMAGE_NAME_PUBLIC }}:trivy-${{ env.SHORT_SHA }}
 
       - name: Generate Trivy public release gate SARIF
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME_PUBLIC }}:trivy-${{ env.SHORT_SHA }}
           format: sarif
@@ -132,13 +131,13 @@ jobs:
 
       - name: Upload Trivy public release gate SARIF
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4
         with:
           sarif_file: trivy-public-release-gate.sarif
           category: trivy-public
 
       - name: Run Trivy public release gate before Quay publish
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME_PUBLIC }}:trivy-${{ env.SHORT_SHA }}
           format: table
@@ -162,7 +161,7 @@ jobs:
           tags: ${{ env.IMAGE_NAME_CERTIFIED }}:trivy-${{ env.SHORT_SHA }}
 
       - name: Generate Trivy certified release gate SARIF
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME_CERTIFIED }}:trivy-${{ env.SHORT_SHA }}
           format: sarif
@@ -174,13 +173,13 @@ jobs:
 
       - name: Upload Trivy certified release gate SARIF
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4
         with:
           sarif_file: trivy-certified-release-gate.sarif
           category: trivy-certified
 
       - name: Run Trivy certified release gate before Quay publish
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME_CERTIFIED }}:trivy-${{ env.SHORT_SHA }}
           format: table
@@ -202,7 +201,7 @@ jobs:
           tags: ${{ env.IMAGE_NAME_BOOTSTRAP }}:trivy-${{ env.SHORT_SHA }}
 
       - name: Generate Trivy bootstrap release gate SARIF
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME_BOOTSTRAP }}:trivy-${{ env.SHORT_SHA }}
           format: sarif
@@ -214,13 +213,13 @@ jobs:
 
       - name: Upload Trivy bootstrap release gate SARIF
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4
         with:
           sarif_file: trivy-bootstrap-release-gate.sarif
           category: trivy-bootstrap
 
       - name: Run Trivy bootstrap release gate before Quay publish
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME_BOOTSTRAP }}:trivy-${{ env.SHORT_SHA }}
           format: table
@@ -393,7 +392,72 @@ jobs:
           TRIVY_REPORT="$trivy_reports" \
           python3 scripts/generate-release-evidence.py
 
-      - name: Attach release evidence
+      - name: Write release provenance
+        shell: bash
+        env:
+          PUBLIC_DIGEST: ${{ steps.build_public.outputs.digest }}
+          CERTIFIED_DIGEST: ${{ steps.build_certified.outputs.digest }}
+          BOOTSTRAP_DIGEST: ${{ steps.build_bootstrap.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cat > dist/release-provenance.json <<EOF
+          {
+            "repository": "${GITHUB_REPOSITORY}",
+            "release": "${RELEASE_TAG}",
+            "version": "${VERSION}",
+            "commit": "${FULL_SHA}",
+            "images": [
+              "${IMAGE_NAME_PUBLIC}@${PUBLIC_DIGEST}",
+              "${IMAGE_NAME_CERTIFIED}@${CERTIFIED_DIGEST}",
+              "${IMAGE_NAME_BOOTSTRAP}@${BOOTSTRAP_DIGEST}"
+            ],
+            "workflow": "${GITHUB_WORKFLOW}",
+            "run_id": "${GITHUB_RUN_ID}",
+            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
+          }
+          EOF
+
+      - name: Sign release evidence assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum release-evidence.json release-evidence.md release-provenance.json > SHA256SUMS
+          cosign sign-blob --yes --bundle release-evidence.json.bundle release-evidence.json
+          cosign sign-blob --yes --bundle release-evidence.md.bundle release-evidence.md
+          cosign sign-blob --yes --bundle release-provenance.json.bundle release-provenance.json
+          cosign sign-blob --yes --bundle SHA256SUMS.bundle SHA256SUMS
+
+      - name: Upload release evidence artifact
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
+        with:
+          name: release-evidence
+          path: |
+            dist/release-evidence.json
+            dist/release-evidence.md
+            dist/release-provenance.json
+            dist/SHA256SUMS
+            dist/*.bundle
+          if-no-files-found: ignore
+
+  attach-release-evidence:
+    name: Attach signed release evidence
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: Download release evidence artifact
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5
+        with:
+          name: release-evidence
+          path: dist
+
+      - name: Attach signed release evidence
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -401,14 +465,7 @@ jobs:
           gh release upload "${{ github.event.release.tag_name }}" \
             dist/release-evidence.json \
             dist/release-evidence.md \
+            dist/release-provenance.json \
+            dist/SHA256SUMS \
+            dist/*.bundle \
             --clobber
-
-      - name: Upload release evidence artifact
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
-        with:
-          name: release-evidence
-          path: |
-            dist/release-evidence.json
-            dist/release-evidence.md
-          if-no-files-found: ignore
