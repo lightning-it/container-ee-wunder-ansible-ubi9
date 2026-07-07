@@ -29,7 +29,9 @@ jobs:
     needs: lint
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
-      contents: read
+      contents: write
+      issues: write
+      pull-requests: write
     env:
       GITHUB_TOKEN: ${{ secrets.LITRELEASEBOT_TOKEN }}
       GH_TOKEN: ${{ secrets.LITRELEASEBOT_TOKEN }}

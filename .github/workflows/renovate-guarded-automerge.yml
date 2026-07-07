@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   approve-renovate:
@@ -16,8 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.pull_request.draft == false
     permissions:
-      contents: read
-      pull-requests: read
+      contents: write
+      pull-requests: write
 
     steps:
       - name: Verify Renovate PR identity
@@ -65,20 +64,10 @@ jobs:
       - name: Approve and enable auto-merge
         if: steps.guard.outputs.trusted == 'true'
         env:
-          GH_TOKEN: ${{ secrets.LITRELEASEBOT_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           set -euo pipefail
-
-          if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error::Missing required secret: secrets.LITRELEASEBOT_TOKEN"
-            exit 1
-          fi
-
-          if ! gh auth status --hostname github.com >/dev/null 2>&1; then
-            echo "::error::secrets.LITRELEASEBOT_TOKEN is not a valid GitHub token"
-            exit 1
-          fi
 
           gh pr review "$PR_URL" \
             --approve \
