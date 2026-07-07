@@ -11,30 +11,16 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   promote:
     name: Open develop-to-main promotion PR
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
 
     steps:
-      - name: Validate bot token
-        env:
-          GH_TOKEN: ${{ secrets.LITRELEASEBOT_TOKEN }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error::Missing required secret: secrets.LITRELEASEBOT_TOKEN"
-            exit 1
-          fi
-
-          if ! gh auth status --hostname github.com >/dev/null 2>&1; then
-            echo "::error::secrets.LITRELEASEBOT_TOKEN is not a valid GitHub token"
-            exit 1
-          fi
-
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
         with:
@@ -44,17 +30,22 @@ jobs:
       - name: Create or update promotion PR
         env:
           BOT_TOKEN: ${{ secrets.LITRELEASEBOT_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
-          if [ -z "${BOT_TOKEN:-}" ]; then
-            echo "::error::Missing required secret: secrets.LITRELEASEBOT_TOKEN"
-            exit 1
+          pr_token="${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
+          if [ -n "${BOT_TOKEN:-}" ]; then
+            if GH_TOKEN="$BOT_TOKEN" gh api user --jq '.login' >/dev/null 2>&1; then
+              pr_token="$BOT_TOKEN"
+            else
+              echo "LITRELEASEBOT_TOKEN is not valid; falling back to GITHUB_TOKEN."
+            fi
           fi
 
-          if ! GH_TOKEN="$BOT_TOKEN" gh auth status --hostname github.com >/dev/null 2>&1; then
-            echo "::error::secrets.LITRELEASEBOT_TOKEN is not a valid GitHub token"
+          if ! GH_TOKEN="$pr_token" gh auth status --hostname github.com >/dev/null 2>&1; then
+            echo "No valid GitHub token is available for promotion PRs."
             exit 1
           fi
 
@@ -71,7 +62,7 @@ jobs:
           fi
 
           title="chore(release): promote develop to main"
-          pr_url="$(GH_TOKEN="$BOT_TOKEN" gh pr list \
+          pr_url="$(GH_TOKEN="$pr_token" gh pr list \
             --repo "$REPO" \
             --base main \
             --head develop \
@@ -85,7 +76,7 @@ jobs:
               echo "Sync main back to develop before opening a promotion PR."
             }
             if [ -n "$pr_url" ]; then
-              GH_TOKEN="$BOT_TOKEN" gh pr close "$pr_url" \
+              GH_TOKEN="$pr_token" gh pr close "$pr_url" \
                 --repo "$REPO" \
                 --comment "Closing stale promotion PR: main is not an ancestor of develop."
             fi
@@ -95,7 +86,7 @@ jobs:
           if git diff --quiet origin/main origin/develop -- .; then
             echo "develop and main have no file differences; promotion not needed."
             if [ -n "$pr_url" ]; then
-              GH_TOKEN="$BOT_TOKEN" gh pr close "$pr_url" \
+              GH_TOKEN="$pr_token" gh pr close "$pr_url" \
                 --repo "$REPO" \
                 --comment "Closing empty promotion PR: develop and main have no file differences."
             fi
@@ -111,14 +102,14 @@ jobs:
           body+=$'ancestor of `main`.'
 
           if [ -z "$pr_url" ]; then
-            GH_TOKEN="$BOT_TOKEN" gh pr create \
+            GH_TOKEN="$pr_token" gh pr create \
               --repo "$REPO" \
               --base main \
               --head develop \
               --title "$title" \
               --body "$body"
           else
-            GH_TOKEN="$BOT_TOKEN" gh pr edit "$pr_url" \
+            GH_TOKEN="$pr_token" gh pr edit "$pr_url" \
               --repo "$REPO" \
               --title "$title" \
               --body "$body"
