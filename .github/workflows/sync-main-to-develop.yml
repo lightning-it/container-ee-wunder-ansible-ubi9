@@ -19,15 +19,31 @@ jobs:
     name: Open main-to-develop sync PR
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+      pull-requests: read
 
     steps:
+      - name: Validate bot token
+        env:
+          GH_TOKEN: ${{ secrets.LITRELEASEBOT_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::Missing required secret: secrets.LITRELEASEBOT_TOKEN"
+            exit 1
+          fi
+
+          if ! gh auth status --hostname github.com >/dev/null 2>&1; then
+            echo "::error::secrets.LITRELEASEBOT_TOKEN is not a valid GitHub token"
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
         with:
           fetch-depth: 0
-          token: ${{ github.token }}
+          token: ${{ secrets.LITRELEASEBOT_TOKEN }}
           persist-credentials: true
 
       - name: Configure git author
@@ -38,22 +54,17 @@ jobs:
       - name: Create or update sync PR
         env:
           BOT_TOKEN: ${{ secrets.LITRELEASEBOT_TOKEN }}
-          GITHUB_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
-          pr_token="${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
-          if [ -n "${BOT_TOKEN:-}" ]; then
-            if GH_TOKEN="$BOT_TOKEN" gh api user --jq '.login' >/dev/null 2>&1; then
-              pr_token="$BOT_TOKEN"
-            else
-              echo "LITRELEASEBOT_TOKEN is not valid; falling back to GITHUB_TOKEN."
-            fi
+          if [ -z "${BOT_TOKEN:-}" ]; then
+            echo "::error::Missing required secret: secrets.LITRELEASEBOT_TOKEN"
+            exit 1
           fi
 
-          if ! GH_TOKEN="$pr_token" gh auth status --hostname github.com >/dev/null 2>&1; then
-            echo "No valid GitHub token is available for main-to-develop sync PRs."
+          if ! GH_TOKEN="$BOT_TOKEN" gh auth status --hostname github.com >/dev/null 2>&1; then
+            echo "::error::secrets.LITRELEASEBOT_TOKEN is not a valid GitHub token"
             exit 1
           fi
 
@@ -61,7 +72,7 @@ jobs:
           sync_branch="chore/sync-main-to-develop"
           title="chore: sync main back to develop"
 
-          pr_url="$(GH_TOKEN="$pr_token" gh pr list \
+          pr_url="$(GH_TOKEN="$BOT_TOKEN" gh pr list \
             --repo "$REPO" \
             --base develop \
             --head "$sync_branch" \
@@ -72,7 +83,7 @@ jobs:
           if git merge-base --is-ancestor origin/main origin/develop; then
             echo "develop already contains main; nothing to sync."
             if [ -n "$pr_url" ]; then
-              GH_TOKEN="$pr_token" gh pr close "$pr_url" \
+              GH_TOKEN="$BOT_TOKEN" gh pr close "$pr_url" \
                 --repo "$REPO" \
                 --comment "Closing empty back-sync PR: develop already contains main."
             fi
@@ -89,14 +100,14 @@ jobs:
           body+=$'promotion PR can open cleanly.'
 
           if [ -z "$pr_url" ]; then
-            GH_TOKEN="$pr_token" gh pr create \
+            GH_TOKEN="$BOT_TOKEN" gh pr create \
               --repo "$REPO" \
               --base develop \
               --head "$sync_branch" \
               --title "$title" \
               --body "$body"
           else
-            GH_TOKEN="$pr_token" gh pr edit "$pr_url" \
+            GH_TOKEN="$BOT_TOKEN" gh pr edit "$pr_url" \
               --repo "$REPO" \
               --title "$title" \
               --body "$body"

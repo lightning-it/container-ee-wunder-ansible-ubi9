@@ -16,7 +16,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-      security-events: write
     env:
       REGISTRY: quay.io
 
@@ -129,12 +128,13 @@ jobs:
           severity: CRITICAL
           exit-code: "0"
 
-      - name: Upload Trivy public release gate SARIF
+      - name: Upload Trivy public release gate SARIF artifact
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
-          sarif_file: trivy-public-release-gate.sarif
-          category: trivy-public
+          name: trivy-public-release-gate-sarif
+          path: trivy-public-release-gate.sarif
+          if-no-files-found: error
 
       - name: Run Trivy public release gate before Quay publish
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
@@ -171,12 +171,13 @@ jobs:
           severity: CRITICAL
           exit-code: "0"
 
-      - name: Upload Trivy certified release gate SARIF
+      - name: Upload Trivy certified release gate SARIF artifact
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
-          sarif_file: trivy-certified-release-gate.sarif
-          category: trivy-certified
+          name: trivy-certified-release-gate-sarif
+          path: trivy-certified-release-gate.sarif
+          if-no-files-found: error
 
       - name: Run Trivy certified release gate before Quay publish
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
@@ -211,12 +212,13 @@ jobs:
           severity: CRITICAL
           exit-code: "0"
 
-      - name: Upload Trivy bootstrap release gate SARIF
+      - name: Upload Trivy bootstrap release gate SARIF artifact
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
-          sarif_file: trivy-bootstrap-release-gate.sarif
-          category: trivy-bootstrap
+          name: trivy-bootstrap-release-gate-sarif
+          path: trivy-bootstrap-release-gate.sarif
+          if-no-files-found: error
 
       - name: Run Trivy bootstrap release gate before Quay publish
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
@@ -400,47 +402,88 @@ jobs:
           BOOTSTRAP_DIGEST: ${{ steps.build_bootstrap.outputs.digest }}
         run: |
           set -euo pipefail
-          mkdir -p dist
-          cat > dist/release-provenance.json <<EOF
-          {
-            "repository": "${GITHUB_REPOSITORY}",
-            "release": "${RELEASE_TAG}",
-            "version": "${VERSION}",
-            "commit": "${FULL_SHA}",
-            "images": [
-              "${IMAGE_NAME_PUBLIC}@${PUBLIC_DIGEST}",
-              "${IMAGE_NAME_CERTIFIED}@${CERTIFIED_DIGEST}",
-              "${IMAGE_NAME_BOOTSTRAP}@${BOOTSTRAP_DIGEST}"
-            ],
-            "workflow": "${GITHUB_WORKFLOW}",
-            "run_id": "${GITHUB_RUN_ID}",
-            "run_attempt": "${GITHUB_RUN_ATTEMPT}"
-          }
-          EOF
+          artifacts="$IMAGE_NAME_PUBLIC@$PUBLIC_DIGEST,$IMAGE_NAME_CERTIFIED@$CERTIFIED_DIGEST,$IMAGE_NAME_BOOTSTRAP@$BOOTSTRAP_DIGEST"
+          python3 scripts/generate-release-provenance.py \
+            --mode workflow-release \
+            --release-tag "$RELEASE_TAG" \
+            --commit "$FULL_SHA" \
+            --subject dist/release-evidence.json \
+            --subject dist/release-evidence.md \
+            --artifact "$artifacts"
 
       - name: Sign release evidence assets
         shell: bash
         run: |
           set -euo pipefail
           cd dist
-          sha256sum release-evidence.json release-evidence.md release-provenance.json > SHA256SUMS
-          cosign sign-blob --yes --bundle release-evidence.json.bundle release-evidence.json
-          cosign sign-blob --yes --bundle release-evidence.md.bundle release-evidence.md
-          cosign sign-blob --yes --bundle release-provenance.json.bundle release-provenance.json
-          cosign sign-blob --yes --bundle SHA256SUMS.bundle SHA256SUMS
+          sha256sum release-evidence.json release-evidence.md release-provenance.intoto.jsonl > SHA256SUMS
+          cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
 
       - name: Upload release evidence artifact
         if: always()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: release-evidence
           path: |
             dist/release-evidence.json
             dist/release-evidence.md
-            dist/release-provenance.json
+            dist/release-provenance.intoto.jsonl
             dist/SHA256SUMS
-            dist/*.bundle
+            dist/SHA256SUMS.sigstore.json
           if-no-files-found: ignore
+
+  upload-trivy-sarif:
+    name: Upload Trivy release gate SARIF
+    runs-on: ubuntu-latest
+    needs: build
+    if: always()
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Download Trivy public release gate SARIF
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+        with:
+          name: trivy-public-release-gate-sarif
+          path: sarif
+
+      - name: Upload Trivy public release gate SARIF
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4
+        with:
+          sarif_file: sarif/trivy-public-release-gate.sarif
+          category: trivy-public
+
+      - name: Download Trivy certified release gate SARIF
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+        with:
+          name: trivy-certified-release-gate-sarif
+          path: sarif
+
+      - name: Upload Trivy certified release gate SARIF
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4
+        with:
+          sarif_file: sarif/trivy-certified-release-gate.sarif
+          category: trivy-certified
+
+      - name: Download Trivy bootstrap release gate SARIF
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+        with:
+          name: trivy-bootstrap-release-gate-sarif
+          path: sarif
+
+      - name: Upload Trivy bootstrap release gate SARIF
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4
+        with:
+          sarif_file: sarif/trivy-bootstrap-release-gate.sarif
+          category: trivy-bootstrap
 
   attach-release-evidence:
     name: Attach signed release evidence
@@ -448,11 +491,11 @@ jobs:
     needs: build
     permissions:
       actions: read
-      contents: write
+      contents: read
 
     steps:
       - name: Download release evidence artifact
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0  # v5
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: release-evidence
           path: dist
@@ -460,12 +503,24 @@ jobs:
       - name: Attach signed release evidence
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.LITRELEASEBOT_TOKEN }}
         run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::Missing required secret: secrets.LITRELEASEBOT_TOKEN"
+            exit 1
+          fi
+
+          if ! gh auth status --hostname github.com >/dev/null 2>&1; then
+            echo "::error::secrets.LITRELEASEBOT_TOKEN is not a valid GitHub token"
+            exit 1
+          fi
+
           gh release upload "${{ github.event.release.tag_name }}" \
             dist/release-evidence.json \
             dist/release-evidence.md \
-            dist/release-provenance.json \
+            dist/release-provenance.intoto.jsonl \
             dist/SHA256SUMS \
-            dist/*.bundle \
+            dist/SHA256SUMS.sigstore.json \
             --clobber

@@ -51,12 +51,14 @@ ARG PIP_VERSION=26.1.2
 
 COPY requirements.txt /build/requirements.txt
 COPY requirements.lock /build/requirements.lock
+COPY pip.lock /build/pip.lock
 
-RUN python -m pip install --no-cache-dir --upgrade "pip==${PIP_VERSION}" && \
+RUN python -m pip install --no-cache-dir --upgrade \
+      --require-hashes -r /build/pip.lock && \
     python -m pip install --no-cache-dir \
       --timeout "${PIP_TIMEOUT}" --retries "${PIP_RETRIES}" \
       --require-hashes -r /build/requirements.lock && \
-    rm -f /build/requirements.txt /build/requirements.lock && \
+    rm -f /build/pip.lock /build/requirements.txt /build/requirements.lock && \
     ansible --version && ansible-galaxy --version && ansible-runner --version
 
 ################################################################################
