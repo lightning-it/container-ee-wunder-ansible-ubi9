@@ -59,7 +59,8 @@ RUN python -m pip install --no-cache-dir --upgrade \
     python -m pip install --no-cache-dir \
       --timeout "${PIP_TIMEOUT}" --retries "${PIP_RETRIES}" \
       --require-hashes -r /build/requirements.lock && \
-    install -m 0755 /build/ansible-galaxy.py /usr/local/bin/ansible-galaxy && \
+    galaxy_bin="$(command -v ansible-galaxy)" && \
+    install -m 0755 /build/ansible-galaxy.py "${galaxy_bin}" && \
     rm -f /build/ansible-galaxy.py /build/pip.lock /build/requirements.txt /build/requirements.lock && \
     ansible --version && ansible-galaxy --version && ansible-runner --version
 

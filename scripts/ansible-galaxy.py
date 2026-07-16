@@ -37,9 +37,14 @@ def _make_context(
     """Prefer the verified system PEM bundle when no custom trust is supplied."""
 
     if validate_certs and not cafile and not cadata and not capath:
-        system_cafile = ssl.get_default_verify_paths().cafile
-        if system_cafile and os.path.isfile(system_cafile):
-            cafile = system_cafile
+        candidates = (
+            ssl.get_default_verify_paths().cafile,
+            "/etc/pki/tls/certs/ca-bundle.crt",
+        )
+        cafile = next(
+            (path for path in candidates if path and os.path.isfile(path)),
+            None,
+        )
 
     return _original_make_context(
         cafile=cafile,
