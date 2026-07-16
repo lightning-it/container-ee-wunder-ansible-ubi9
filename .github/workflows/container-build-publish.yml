@@ -452,7 +452,7 @@ jobs:
 
       - name: Upload Trivy public release gate SARIF
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9  # v4
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a  # v4
         with:
           sarif_file: sarif/trivy-public-release-gate.sarif
           category: trivy-public
@@ -466,7 +466,7 @@ jobs:
 
       - name: Upload Trivy certified release gate SARIF
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9  # v4
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a  # v4
         with:
           sarif_file: sarif/trivy-certified-release-gate.sarif
           category: trivy-certified
@@ -480,7 +480,7 @@ jobs:
 
       - name: Upload Trivy bootstrap release gate SARIF
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9  # v4
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a  # v4
         with:
           sarif_file: sarif/trivy-bootstrap-release-gate.sarif
           category: trivy-bootstrap
