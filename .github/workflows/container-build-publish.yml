@@ -24,6 +24,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
         with:
           ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
 
       - name: Validate Quay variables/secrets
         shell: bash
@@ -101,9 +102,13 @@ jobs:
 
       - name: Set up QEMU (multi-arch)
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8  # v4
+        with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:465d3fdd28d0f2b871ba4b4ec98bd183292e96167f00d9fd40bd249f8632d705
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4
+        with:
+          driver-opts: image=docker.io/moby/buildkit:buildx-stable-1@sha256:63db51c9b30208a7c2b1c40392c7ebb9ce2f85ba238a18a85420f8f5ea2d4684
 
       - name: Build public image for Trivy release gate
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7
@@ -129,7 +134,6 @@ jobs:
           exit-code: "0"
 
       - name: Upload Trivy public release gate SARIF artifact
-        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: trivy-public-release-gate-sarif
@@ -172,7 +176,6 @@ jobs:
           exit-code: "0"
 
       - name: Upload Trivy certified release gate SARIF artifact
-        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: trivy-certified-release-gate-sarif
@@ -213,7 +216,6 @@ jobs:
           exit-code: "0"
 
       - name: Upload Trivy bootstrap release gate SARIF artifact
-        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: trivy-bootstrap-release-gate-sarif
@@ -430,7 +432,7 @@ jobs:
             dist/release-provenance.intoto.jsonl
             dist/SHA256SUMS
             dist/SHA256SUMS.sigstore.json
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   upload-trivy-sarif:
     name: Upload Trivy release gate SARIF
@@ -444,43 +446,37 @@ jobs:
 
     steps:
       - name: Download Trivy public release gate SARIF
-        continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: trivy-public-release-gate-sarif
           path: sarif
 
       - name: Upload Trivy public release gate SARIF
-        continue-on-error: true
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9  # v4
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a  # v4
         with:
           sarif_file: sarif/trivy-public-release-gate.sarif
           category: trivy-public
 
       - name: Download Trivy certified release gate SARIF
-        continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: trivy-certified-release-gate-sarif
           path: sarif
 
       - name: Upload Trivy certified release gate SARIF
-        continue-on-error: true
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9  # v4
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a  # v4
         with:
           sarif_file: sarif/trivy-certified-release-gate.sarif
           category: trivy-certified
 
       - name: Download Trivy bootstrap release gate SARIF
-        continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: trivy-bootstrap-release-gate-sarif
           path: sarif
 
       - name: Upload Trivy bootstrap release gate SARIF
-        continue-on-error: true
-        uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9  # v4
+        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a  # v4
         with:
           sarif_file: sarif/trivy-bootstrap-release-gate.sarif
           category: trivy-bootstrap
