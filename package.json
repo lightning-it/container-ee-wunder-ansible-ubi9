@@ -9,13 +9,13 @@
   },
   "overrides": {
     "@semantic-release/github": {
-      "undici": "8.7.0"
+      "undici": "8.8.0"
     },
     "@actions/http-client": {
-      "undici": "8.7.0"
+      "undici": "8.8.0"
     },
     "node-gyp": {
-      "undici": "8.7.0"
+      "undici": "8.8.0"
     },
     "handlebars": "4.7.9",
     "lodash-es": "4.18.1",
