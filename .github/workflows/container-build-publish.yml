@@ -325,6 +325,14 @@ jobs:
             org.opencontainers.image.title=${{ github.event.repository.name }}-bootstrap
             org.opencontainers.image.description=${{ github.event.repository.description }}
 
+      - name: Reclaim build cache before release verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx prune --all --force
+          docker image prune --all --force
+          df -h /
+
       - name: Verify, scan, sign, and summarize public image
         shell: bash
         env:
