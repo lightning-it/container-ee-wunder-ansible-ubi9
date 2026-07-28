@@ -51,6 +51,10 @@ docker run --rm "${IMAGE}" bash -lc '
   echo "Collections (top):"
   ansible-galaxy collection list | head -n 60
   echo
+  echo "Required AAP role:"
+  ansible-doc --type role lit.supplementary.aap_preflight >/dev/null
+  echo "lit.supplementary.aap_preflight available"
+  echo
   echo "Roles (system path):"
   ansible-galaxy role list -p /usr/share/ansible/roles || true
 '
