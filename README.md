@@ -105,6 +105,8 @@ Required repository configuration:
 - Secrets: `QUAY_USERNAME`, `QUAY_PASSWORD`
 - Secret for certified profile build: `RH_AUTOMATION_HUB_TOKEN`
 
+Release verification uses an isolated 4 GiB temporary workspace for the Trivy database and image scan.
+
 ## Local builds
 
 Public image:
