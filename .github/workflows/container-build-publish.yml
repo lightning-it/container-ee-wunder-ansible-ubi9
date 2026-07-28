@@ -21,9 +21,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
           ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
 
       - name: Validate Quay variables/secrets
         shell: bash
@@ -101,9 +102,13 @@ jobs:
 
       - name: Set up QEMU (multi-arch)
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8  # v4
+        with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:465d3fdd28d0f2b871ba4b4ec98bd183292e96167f00d9fd40bd249f8632d705
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4
+        with:
+          driver-opts: image=docker.io/moby/buildkit:buildx-stable-1@sha256:63db51c9b30208a7c2b1c40392c7ebb9ce2f85ba238a18a85420f8f5ea2d4684
 
       - name: Build public image for Trivy release gate
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7
@@ -129,7 +134,6 @@ jobs:
           exit-code: "0"
 
       - name: Upload Trivy public release gate SARIF artifact
-        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: trivy-public-release-gate-sarif
@@ -172,7 +176,6 @@ jobs:
           exit-code: "0"
 
       - name: Upload Trivy certified release gate SARIF artifact
-        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: trivy-certified-release-gate-sarif
@@ -213,7 +216,6 @@ jobs:
           exit-code: "0"
 
       - name: Upload Trivy bootstrap release gate SARIF artifact
-        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: trivy-bootstrap-release-gate-sarif
@@ -231,7 +233,7 @@ jobs:
           exit-code: "1"
 
       - name: Log in to Quay.io
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0  # v4
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7  # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.QUAY_USERNAME }}
@@ -430,7 +432,7 @@ jobs:
             dist/release-provenance.intoto.jsonl
             dist/SHA256SUMS
             dist/SHA256SUMS.sigstore.json
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   upload-trivy-sarif:
     name: Upload Trivy release gate SARIF
@@ -444,43 +446,37 @@ jobs:
 
     steps:
       - name: Download Trivy public release gate SARIF
-        continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: trivy-public-release-gate-sarif
           path: sarif
 
       - name: Upload Trivy public release gate SARIF
-        continue-on-error: true
-        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81  # v4
         with:
           sarif_file: sarif/trivy-public-release-gate.sarif
           category: trivy-public
 
       - name: Download Trivy certified release gate SARIF
-        continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: trivy-certified-release-gate-sarif
           path: sarif
 
       - name: Upload Trivy certified release gate SARIF
-        continue-on-error: true
-        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81  # v4
         with:
           sarif_file: sarif/trivy-certified-release-gate.sarif
           category: trivy-certified
 
       - name: Download Trivy bootstrap release gate SARIF
-        continue-on-error: true
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: trivy-bootstrap-release-gate-sarif
           path: sarif
 
       - name: Upload Trivy bootstrap release gate SARIF
-        continue-on-error: true
-        uses: github/codeql-action/upload-sarif@54f647b7e1bb85c95cddabcd46b0c578ec92bc1a  # v4
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81  # v4
         with:
           sarif_file: sarif/trivy-bootstrap-release-gate.sarif
           category: trivy-bootstrap
@@ -500,20 +496,45 @@ jobs:
           name: release-evidence
           path: dist
 
+      - name: Mint release automation App token
+        id: release-app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Resolve release automation App bot identity
+        id: release-bot
+        env:
+          APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bot_json="$(gh api "users/${APP_SLUG}%5Bbot%5D" 2>/dev/null || printf '{}')"
+          login="$(jq -r '.login // ""' <<<"$bot_json")"
+          bot_id="$(jq -r '.id // ""' <<<"$bot_json")"
+          if [ "$login" != "${APP_SLUG}[bot]" ] || ! [[ "$bot_id" =~ ^[0-9]+$ ]]; then
+            echo "::error::Unable to resolve the release automation App bot identity."
+            exit 1
+          fi
+          echo "login=$login" >>"$GITHUB_OUTPUT"
+          echo "email=${bot_id}+${login}@users.noreply.github.com" >>"$GITHUB_OUTPUT"
+
       - name: Attach signed release evidence
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.LITRELEASEBOT_TOKEN }}
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
         run: |
           set -euo pipefail
 
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error::Missing required secret: secrets.LITRELEASEBOT_TOKEN"
+            echo "::error::Missing required secret: steps.release-app.outputs.token"
             exit 1
           fi
 
           if ! gh auth status --hostname github.com >/dev/null 2>&1; then
-            echo "::error::secrets.LITRELEASEBOT_TOKEN is not a valid GitHub token"
+            echo "::error::steps.release-app.outputs.token is not a valid GitHub token"
             exit 1
           fi
 

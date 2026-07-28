@@ -52,19 +52,22 @@ ARG PIP_VERSION=26.1.2
 COPY requirements.txt /build/requirements.txt
 COPY requirements.lock /build/requirements.lock
 COPY pip.lock /build/pip.lock
+COPY scripts/ansible-galaxy.py /build/ansible-galaxy.py
 
 RUN python -m pip install --no-cache-dir --upgrade \
       --require-hashes -r /build/pip.lock && \
     python -m pip install --no-cache-dir \
       --timeout "${PIP_TIMEOUT}" --retries "${PIP_RETRIES}" \
       --require-hashes -r /build/requirements.lock && \
-    rm -f /build/pip.lock /build/requirements.txt /build/requirements.lock && \
+    galaxy_bin="$(command -v ansible-galaxy)" && \
+    install -m 0755 /build/ansible-galaxy.py "${galaxy_bin}" && \
+    rm -f /build/ansible-galaxy.py /build/pip.lock /build/requirements.txt /build/requirements.lock && \
     ansible --version && ansible-galaxy --version && ansible-runner --version
 
 ################################################################################
 # Terraform
 ################################################################################
-ARG TERRAFORM_VERSION=1.15.7
+ARG TERRAFORM_VERSION=1.15.8
 RUN set -euo pipefail; \
     source /usr/local/lib/container-download-verified.sh; \
     arch="$(uname -m)"; \
@@ -86,7 +89,7 @@ RUN set -euo pipefail; \
 ################################################################################
 # Terragrunt
 ################################################################################
-ARG TERRAGRUNT_VERSION=1.1.0
+ARG TERRAGRUNT_VERSION=1.1.1
 RUN set -euo pipefail; \
     source /usr/local/lib/container-download-verified.sh; \
     arch="$(uname -m)"; \
@@ -107,7 +110,7 @@ RUN set -euo pipefail; \
 ################################################################################
 # Helm
 ################################################################################
-ARG HELM_VERSION=3.21.2
+ARG HELM_VERSION=3.21.3
 RUN set -euo pipefail; \
     source /usr/local/lib/container-download-verified.sh; \
     arch="$(uname -m)"; \
