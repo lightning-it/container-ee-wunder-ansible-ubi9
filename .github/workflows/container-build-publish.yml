@@ -546,7 +546,9 @@ jobs:
             exit 1
           fi
 
-          gh release upload "${{ github.event.release.tag_name }}" \
+          gh release upload \
+            --repo "${GITHUB_REPOSITORY}" \
+            "${{ github.event.release.tag_name }}" \
             dist/release-evidence.json \
             dist/release-evidence.md \
             dist/release-provenance.intoto.jsonl \
