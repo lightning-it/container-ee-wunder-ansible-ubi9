@@ -1,0 +1,37 @@
+# MLX-90 finalizer. Dispatch is restricted to the trusted release App by repository policy.
+# yamllint disable rule:truthy rule:line-length
+---
+name: Security release final acceptance
+on:
+  repository_dispatch:
+    types: [security-release-finalize]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  verify-published-digest:
+    name: Pull and verify published container digest
+    runs-on: ubuntu-latest
+    environment: security-release-acceptance
+    steps:
+      - name: Checkout accepted main revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          ref: ${{ github.event.client_payload.consumer_merge_sha }}
+          persist-credentials: false
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+
+      - name: Verify immutable release and fix acceptance
+        shell: bash
+        env:
+          IMAGE_REF: ${{ github.event.client_payload.image_ref }}
+          EXPECTED_COLLECTION: ${{ github.event.client_payload.collection }}
+          EXPECTED_VERSION: ${{ github.event.client_payload.collection_version }}
+          ACCEPTANCE_COMMAND: ${{ vars.MLX90_ACCEPTANCE_COMMAND }}
+          COSIGN_IDENTITY_REGEXP: ${{ vars.MLX90_COSIGN_IDENTITY_REGEXP }}
+          COSIGN_ISSUER: ${{ vars.MLX90_COSIGN_ISSUER }}
+        run: scripts/security-release-container-acceptance.sh

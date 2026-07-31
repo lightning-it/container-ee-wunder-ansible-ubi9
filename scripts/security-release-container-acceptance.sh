@@ -9,14 +9,12 @@ set -euo pipefail
 : "${COSIGN_IDENTITY_REGEXP:?COSIGN_IDENTITY_REGEXP is required}"
 : "${COSIGN_ISSUER:?COSIGN_ISSUER is required}"
 
-case "$IMAGE_REF" in
-  *@sha256:[0-9a-f][0-9a-f]*) ;;
-  *) echo "ERROR: IMAGE_REF must be immutable" >&2; exit 1 ;;
-esac
+[[ "$IMAGE_REF" =~ @sha256:([0-9a-f]{64})$ ]] || { echo "ERROR: IMAGE_REF must end in a full immutable SHA-256 digest" >&2; exit 1; }
+expected_digest="${BASH_REMATCH[1]}"
 
 docker pull "$IMAGE_REF"
-resolved="$(docker image inspect "$IMAGE_REF" --format '{{index .RepoDigests 0}}')"
-[ "$resolved" = "$IMAGE_REF" ] || { echo "ERROR: pulled digest differs: $resolved" >&2; exit 1; }
+resolved="$(docker image inspect "$IMAGE_REF" --format '{{join .RepoDigests "\n"}}')"
+grep -Eq "@sha256:${expected_digest}$" <<<"$resolved" || { echo "ERROR: pulled digest differs: $resolved" >&2; exit 1; }
 
 cosign verify --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
   --certificate-oidc-issuer "$COSIGN_ISSUER" "$IMAGE_REF" >/dev/null
