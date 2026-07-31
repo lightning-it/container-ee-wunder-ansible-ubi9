@@ -31,6 +31,8 @@ import json, sys
 collection, expected = sys.argv[1:]
 try:
     payload = json.load(sys.stdin)
+    if not isinstance(payload, dict):
+        raise TypeError("top-level value must be an object")
     versions = [data[collection]["version"] for data in payload.values() if collection in data]
 except (json.JSONDecodeError, KeyError, TypeError) as exc:
     raise SystemExit(f"invalid ansible-galaxy collection output: {exc}") from exc
