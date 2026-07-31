@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   verify-published-digest:
+    if: github.event.sender.login == 'lightning-it-release-automation[bot]'
     name: Pull and verify published container digest
     runs-on: ubuntu-latest
     environment: security-release-acceptance
