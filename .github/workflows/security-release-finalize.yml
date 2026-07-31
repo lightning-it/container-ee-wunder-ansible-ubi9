@@ -8,13 +8,29 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
+  validate-dispatch-sender:
+    name: Reject untrusted dispatch senders
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require trusted release automation App
+        env:
+          DISPATCH_SENDER: ${{ github.event.sender.login }}
+        run: |
+          if [[ "$DISPATCH_SENDER" != 'lightning-it-release-automation[bot]' ]]; then
+            echo "::error::Untrusted repository_dispatch sender: $DISPATCH_SENDER"
+            exit 1
+          fi
+
   verify-published-digest:
     name: Pull and verify published container digest
+    needs: validate-dispatch-sender
     runs-on: ubuntu-latest
     environment: security-release-acceptance
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Validate immutable consumer merge SHA
         shell: bash
