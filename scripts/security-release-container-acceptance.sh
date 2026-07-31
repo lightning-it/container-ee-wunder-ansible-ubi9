@@ -25,15 +25,18 @@ cosign verify-attestation --type slsaprovenance \
   --certificate-identity-regexp "$COSIGN_IDENTITY_REGEXP" \
   --certificate-oidc-issuer "$COSIGN_ISSUER" "$IMAGE_REF" >/dev/null
 
-installed="$(docker run --rm "$IMAGE_REF" ansible-galaxy collection list "$EXPECTED_COLLECTION" --format json)"
-python3 - "$EXPECTED_COLLECTION" "$EXPECTED_VERSION" "$installed" <<'PY'
+docker run --rm "$IMAGE_REF" ansible-galaxy collection list "$EXPECTED_COLLECTION" --format json |
+python3 -c '
 import json, sys
-collection, expected, raw = sys.argv[1:]
-payload = json.loads(raw)
-versions = [data[collection]["version"] for data in payload.values() if collection in data]
+collection, expected = sys.argv[1:]
+try:
+    payload = json.load(sys.stdin)
+    versions = [data[collection]["version"] for data in payload.values() if collection in data]
+except (json.JSONDecodeError, KeyError, TypeError) as exc:
+    raise SystemExit(f"invalid ansible-galaxy collection output: {exc}") from exc
 if versions != [expected]:
     raise SystemExit(f"installed {collection} versions {versions!r}, expected exactly {expected!r}")
-PY
+' "$EXPECTED_COLLECTION" "$EXPECTED_VERSION"
 
 docker run --rm "$IMAGE_REF" bash -euo pipefail -c "$ACCEPTANCE_COMMAND"
 printf '%s\n' "MLX-90 final acceptance passed for $IMAGE_REF"
