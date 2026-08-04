@@ -63,8 +63,8 @@ APPROVED_ACCEPTANCE_RELEASES: dict[
 ] = {
     "lit.supplementary/forgejo-manifest-secret-permissions-v1": (
         "3.1.0",
-        "3.2.0",
-        frozenset({"LIT-SEC-MLX90-2026-001"}),
+        "3.2.2",
+        frozenset({"GHSA-vjjf-wc74-gp86"}),
     )
 }
 APPROVED_ACCEPTANCE_PROFILES: frozenset[str] = frozenset(
