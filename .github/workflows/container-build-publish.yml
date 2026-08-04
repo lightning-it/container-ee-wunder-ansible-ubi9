@@ -609,7 +609,7 @@ jobs:
           receipt_dir="$(mktemp -d "${RUNNER_TEMP:?}/mlx90-source-receipt.XXXXXX")"
           chmod 0700 "$receipt_dir"
           receipt_path="${receipt_dir}/security-release-receipt.json"
-          (umask 077 && printf '%s' "$receipt_json" >"$receipt_path")
+          (umask 077 && git cat-file blob "$receipt_blob" >"$receipt_path")
           chmod 0400 "$receipt_path"
           test "$(git hash-object --no-filters -- "$receipt_path")" = "$receipt_blob"
           base_requirements_blob="$(git rev-parse \
