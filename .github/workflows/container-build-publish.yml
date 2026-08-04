@@ -57,6 +57,7 @@ jobs:
       certified_digest: ${{ steps.release-digests.outputs.certified_digest }}
       bootstrap_digest: ${{ steps.release-digests.outputs.bootstrap_digest }}
     permissions:
+      actions: read
       contents: read
       id-token: write
       pull-requests: read
@@ -78,6 +79,7 @@ jobs:
       - name: Validate exact tag-bound draft dispatch
         id: release-trigger
         env:
+          ACTIONS_GH_TOKEN: ${{ github.token }}
           APP_INSTALLATION_ID: ${{ steps.release-read-app.outputs.installation-id }}
           APP_SLUG: ${{ steps.release-read-app.outputs.app-slug }}
           GH_TOKEN: ${{ steps.release-read-app.outputs.token }}
@@ -105,8 +107,8 @@ jobs:
           [[ "$SEMANTIC_RELEASE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           test "$GITHUB_REF" = "refs/tags/${RELEASE_TAG_INPUT}"
           test "$GITHUB_SHA" = "$SOURCE_SHA"
-          orchestrator="$(gh api \
-            "repos/${GITHUB_REPOSITORY}/actions/runs/${SEMANTIC_RELEASE_RUN_ID}/attempts/${SEMANTIC_RELEASE_RUN_ATTEMPT}")"
+          orchestrator="$(GH_TOKEN="$ACTIONS_GH_TOKEN" gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${SEMANTIC_RELEASE_RUN_ID}")"
           jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
             --argjson run_attempt "$SEMANTIC_RELEASE_RUN_ATTEMPT" \
@@ -753,6 +755,7 @@ jobs:
       - name: Revalidate exact draft immediately before registry mutation
         shell: bash
         env:
+          ACTIONS_GH_TOKEN: ${{ github.token }}
           GH_TOKEN: ${{ steps.release-read-app.outputs.token }}
           RELEASE_BODY_SHA256: ${{ inputs.release_body_sha256 }}
           RELEASE_ID: ${{ inputs.release_id }}
@@ -817,8 +820,8 @@ jobs:
           bash "$boundary_script" "$FULL_SHA"
           completed_orchestrator=
           for poll in {1..24}; do
-            orchestrator="$(gh api \
-              "repos/${GITHUB_REPOSITORY}/actions/runs/${SEMANTIC_RELEASE_RUN_ID}/attempts/${SEMANTIC_RELEASE_RUN_ATTEMPT}")"
+            orchestrator="$(GH_TOKEN="$ACTIONS_GH_TOKEN" gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${SEMANTIC_RELEASE_RUN_ID}")"
             jq -e \
               --arg repository "$GITHUB_REPOSITORY" \
               --argjson run_attempt "$SEMANTIC_RELEASE_RUN_ATTEMPT" \
