@@ -1,9 +1,8 @@
 {
   "branches": ["main"],
-  "preset": "conventionalcommits",
+  "tagFormat": "v${version}",
   "plugins": [
-    ["@semantic-release/commit-analyzer", {"releaseRules": [{"type": "chore", "scope": "deps", "release": "patch"}, {"type": "fix", "scope": "security", "release": "patch"}]}],
-    "@semantic-release/release-notes-generator",
-    ["@semantic-release/github", { "assets": [] }]
+    ["@semantic-release/commit-analyzer", {"preset": "conventionalcommits", "releaseRules": [{"type": "chore", "scope": "deps", "release": "patch"}, {"type": "fix", "scope": "security", "release": "patch"}]}],
+    ["@semantic-release/release-notes-generator", {"preset": "conventionalcommits"}]
   ]
 }

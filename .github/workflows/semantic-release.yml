@@ -29,11 +29,16 @@ jobs:
     name: Semantic Release
     runs-on: ubuntu-latest
     needs: lint
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    concurrency:
+      group: mlx90-container-release-${{ github.repository }}
+      queue: max
+      cancel-in-progress: false
+    if: >-
+      github.repository == 'lightning-it/container-ee-wunder-ansible-ubi9'
+      && github.ref == 'refs/heads/main'
+      && github.event_name == 'push'
     permissions:
-      contents: write
-      issues: write
-      pull-requests: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
@@ -41,15 +46,106 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Configure git user (bot)
+      - name: Bootstrap the exact release-planner trust surface
+        id: trust-snapshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
-          git config user.name "lightning-it-release-automation[bot]"
-          git config user.email "307565056+lightning-it-release-automation[bot]@users.noreply.github.com"
-
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7
-        with:
-          node-version: "24"
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          object_format="$(git rev-parse --show-object-format)"
+          case "$object_format" in
+            sha1) oid_pattern='^[0-9a-f]{40}$' ;;
+            sha256) oid_pattern='^[0-9a-f]{64}$' ;;
+            *) echo "unsupported Git object format: $object_format" >&2; exit 1 ;;
+          esac
+          repository="$(gh api "repos/${GITHUB_REPOSITORY}")"
+          test "$(jq -er .default_branch <<<"$repository")" = develop
+          live_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)"
+          live_develop="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/develop" --jq .object.sha)"
+          comparison="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/compare/${SOURCE_SHA}...${live_main}")"
+          jq -e --arg source_sha "$SOURCE_SHA" '
+            (.status == "ahead" or .status == "identical")
+            and .behind_by == 0
+            and .merge_base_commit.sha == $source_sha
+          ' <<<"$comparison" >/dev/null
+          tree_for_commit() {
+            local commit_sha="$1"
+            local tree_sha
+            local tree
+            tree_sha="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/commits/${commit_sha}" --jq .tree.sha)"
+            tree="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/trees/${tree_sha}?recursive=1")"
+            jq -e '.truncated == false' <<<"$tree" >/dev/null
+            printf '%s' "$tree"
+          }
+          source_tree="$(tree_for_commit "$SOURCE_SHA")"
+          main_tree="$(tree_for_commit "$live_main")"
+          develop_tree="$(tree_for_commit "$live_develop")"
+          critical_filter='[
+            .tree[]
+            | select(
+                (.path | startswith(".github/workflows/"))
+                or .path == ".npmrc"
+                or .path == ".releaserc"
+                or .path == "npm-shrinkwrap.json"
+                or .path == "package.json"
+                or .path == "package-lock.json"
+                or .path == "scripts/semantic-release-plan.mjs"
+                or .path == "scripts/validate-semantic-release-boundary.sh"
+              )
+            | {mode, path, sha, size, type}
+          ] | sort_by(.path)'
+          for required_path in \
+            .releaserc \
+            package.json \
+            package-lock.json \
+            scripts/semantic-release-plan.mjs \
+            scripts/validate-semantic-release-boundary.sh; do
+            test "$(jq --arg path "$required_path" '[
+              .tree[] | select(.path == $path and .type == "blob")
+            ] | length' <<<"$source_tree")" -eq 1
+          done
+          source_critical="$(jq -ce "$critical_filter" <<<"$source_tree")"
+          main_critical="$(jq -ce "$critical_filter" <<<"$main_tree")"
+          develop_critical="$(jq -ce "$critical_filter" <<<"$develop_tree")"
+          test "$source_critical" = "$main_critical"
+          test "$source_critical" = "$develop_critical"
+          snapshot_root="${RUNNER_TEMP:?}/semantic-release-trust-snapshots"
+          (umask 077 && mkdir "$snapshot_root")
+          chmod 0700 "$snapshot_root"
+          while IFS='|' read -r source_path snapshot_name output_name; do
+            entry="$(jq -ce --arg path "$source_path" '[
+              .tree[] | select(.path == $path)
+            ] | if length == 1 then .[0] else error("missing exact trust blob") end' \
+              <<<"$source_tree")"
+            jq -e --arg oid_pattern "$oid_pattern" '
+              .mode == "100644"
+              and .type == "blob"
+              and (.sha | test($oid_pattern))
+              and (.size | type == "number" and . > 0 and . <= 1048576)
+            ' <<<"$entry" >/dev/null
+            blob_oid="$(jq -er .sha <<<"$entry")"
+            test "$(git rev-parse "${SOURCE_SHA}:${source_path}")" = "$blob_oid"
+            snapshot_path="${snapshot_root}/${snapshot_name}"
+            git cat-file blob "$blob_oid" \
+              | (umask 077 && dd of="$snapshot_path" bs=65536 status=none oflag=excl)
+            chmod 0400 "$snapshot_path"
+            test "$(stat -c '%a' "$snapshot_path")" = 400
+            test "$(git hash-object --no-filters "$snapshot_path")" = "$blob_oid"
+            {
+              echo "${output_name}_path=$snapshot_path"
+              echo "${output_name}_oid=$blob_oid"
+            } >>"$GITHUB_OUTPUT"
+          done <<'EOF'
+          .releaserc|release-config.json|release_config
+          scripts/semantic-release-plan.mjs|semantic-release-plan.mjs|planner
+          scripts/validate-semantic-release-boundary.sh|validate-semantic-release-boundary.sh|boundary
+          EOF
+          echo "object_format=$object_format" >>"$GITHUB_OUTPUT"
 
       - name: Mint release automation App token
         id: release-app
@@ -58,14 +154,26 @@ jobs:
           client-id: ${{ vars.RELEASE_AUTOMATION_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
+          repositories: container-ee-wunder-ansible-ubi9
+          permission-actions: write
+          permission-contents: write
 
-      - name: Resolve release automation App bot identity
+      - name: Verify exact release automation App scope
         id: release-bot
         env:
+          APP_INSTALLATION_ID: ${{ steps.release-app.outputs.installation-id }}
           APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
         run: |
           set -euo pipefail
+          test "$APP_SLUG" = "lightning-it-release-automation"
+          test "$APP_INSTALLATION_ID" = "148019054"
+          actual_repositories="$(
+            gh api --paginate "installation/repositories?per_page=100" \
+              | jq -sc '[.[].repositories[].full_name] | sort | unique'
+          )"
+          test "$actual_repositories" = \
+            '["lightning-it/container-ee-wunder-ansible-ubi9"]'
           bot_json="$(gh api "users/${APP_SLUG}%5Bbot%5D" 2>/dev/null || printf '{}')"
           login="$(jq -r '.login // ""' <<<"$bot_json")"
           bot_id="$(jq -r '.id // ""' <<<"$bot_json")"
@@ -74,28 +182,744 @@ jobs:
             exit 1
           fi
           echo "login=$login" >>"$GITHUB_OUTPUT"
-          echo "email=${bot_id}+${login}@users.noreply.github.com" >>"$GITHUB_OUTPUT"
 
-      - name: Run semantic-release
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install the locked semantic-release planner
+        run: npm ci --ignore-scripts
+
+      - name: Require an ancestry-safe release trust surface
         env:
-          GITHUB_TOKEN: ${{ steps.release-app.outputs.token }}
+          BOUNDARY_OID: ${{ steps.trust-snapshots.outputs.boundary_oid }}
+          BOUNDARY_SCRIPT: ${{ steps.trust-snapshots.outputs.boundary_path }}
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          OBJECT_FORMAT: ${{ steps.trust-snapshots.outputs.object_format }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          auth_header="$(
-            printf 'x-access-token:%s' "${GITHUB_TOKEN}" | base64 | tr -d '\n'
+          exec {boundary_fd}<"$BOUNDARY_SCRIPT"
+          python3 - "$OBJECT_FORMAT" "$BOUNDARY_OID" "$SOURCE_SHA" 3<&"$boundary_fd" <<'PY'
+          import hashlib
+          import os
+          import re
+          import subprocess
+          import sys
+
+          object_format, expected_oid, source_sha = sys.argv[1:]
+          oid_lengths = {"sha1": 40, "sha256": 64}
+          oid_length = oid_lengths.get(object_format)
+          if oid_length is None:
+              raise SystemExit("unsupported Git object format")
+          if re.fullmatch(rf"[0-9a-f]{{{oid_length}}}", expected_oid) is None:
+              raise SystemExit("invalid expected boundary Git blob OID")
+          payload = os.read(3, 1048577)
+          if not payload or len(payload) > 1048576:
+              raise SystemExit("invalid bounded boundary Git blob")
+          header = f"blob {len(payload)}\0".encode("ascii")
+          actual_oid = hashlib.new(object_format, header + payload).hexdigest()
+          if actual_oid != expected_oid:
+              raise SystemExit("boundary Git blob changed before execution")
+          completed = subprocess.run(
+              ["bash", "-s", "--", source_sha],
+              input=payload,
+              check=False,
+          )
+          raise SystemExit(completed.returncode)
+          PY
+          exec {boundary_fd}<&-
+
+      - name: Resolve the exact resumable source release state
+        id: resume
+        env:
+          APP_BOT_LOGIN: ${{ steps.release-bot.outputs.login }}
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          release_pages="$(gh api --paginate --slurp \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100")"
+          releases="$(jq -ce '[.[][]]' <<<"$release_pages")"
+          stable_drafts="$(jq -ce '[
+            .[]
+            | select(.draft == true and .prerelease == false)
+            | select(.tag_name | test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+          ]' <<<"$releases")"
+          test "$(jq length <<<"$stable_drafts")" -le 1
+          source_releases="$(jq -ce --arg sha "$SOURCE_SHA" '[
+            .[]
+            | select(.target_commitish == $sha)
+            | select(.tag_name | test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+          ]' <<<"$releases")"
+          test "$(jq length <<<"$source_releases")" -le 1
+          tag_pages="$(gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v?per_page=100")"
+          tags="$(jq -ce '[.[][]]' <<<"$tag_pages")"
+          annotated_stable_tags="$(jq '[
+            .[]
+            | select(.ref | test("^refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+            | select(.object.type != "commit")
+          ] | length' <<<"$tags")"
+          test "$annotated_stable_tags" -eq 0 || {
+            echo "ERROR: annotated stable tags are outside the lightweight release contract." >&2
+            exit 1
+          }
+          source_tags="$(jq -ce --arg sha "$SOURCE_SHA" '[
+            .[]
+            | select(.ref | test("^refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+            | select(.object.type == "commit" and .object.sha == $sha)
+          ]' <<<"$tags")"
+          test "$(jq length <<<"$source_tags")" -le 1
+          if [ "$(jq length <<<"$source_releases")" -eq 0 ]; then
+            test "$(jq length <<<"$stable_drafts")" -eq 0 || {
+              echo "ERROR: an older App draft must be published or resolved before planning vNext." >&2
+              exit 1
+            }
+            test "$(jq length <<<"$source_tags")" -eq 0 || {
+              echo "ERROR: stable tag at source has no resumable release draft." >&2
+              exit 1
+            }
+            {
+              echo "release_id="
+              echo "mode=none"
+              echo "retry_tag="
+            } >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          release="$(jq -ce '.[0]' <<<"$source_releases")"
+          release_id="$(jq -er '.id | select(type == "number" and . > 0)' <<<"$release")"
+          release_tag="$(jq -er .tag_name <<<"$release")"
+          jq -e --arg author "$APP_BOT_LOGIN" '
+            .author.login == $author
+            and .name == .tag_name
+            and .prerelease == false
+            and (.body | type == "string" and contains("<!-- lit-mlx90-semantic-plan-v1"))
+          ' <<<"$release" >/dev/null
+          exact_source_tags="$(jq -ce --arg ref "refs/tags/${release_tag}" '[
+            .[] | select(.ref == $ref)
+          ]' <<<"$source_tags")"
+          if [ "$(jq -r .draft <<<"$release")" = true ]; then
+            jq -e '.immutable == false and .published_at == null' <<<"$release" >/dev/null
+            test "$(jq length <<<"$stable_drafts")" -eq 1
+            test "$(jq -er '.[0].id' <<<"$stable_drafts")" = "$release_id"
+            test "$(jq length <<<"$source_tags")" -le 1
+            if [ "$(jq length <<<"$source_tags")" -eq 1 ]; then
+              test "$(jq length <<<"$exact_source_tags")" -eq 1
+            fi
+            {
+              echo "release_id=$release_id"
+              echo "mode=draft"
+              echo "retry_tag=$release_tag"
+            } >>"$GITHUB_OUTPUT"
+          else
+            jq -e '
+              .immutable == true
+              and (.published_at | type == "string" and length > 0)
+            ' <<<"$release" >/dev/null
+            test "$(jq length <<<"$source_tags")" -eq 1
+            test "$(jq length <<<"$exact_source_tags")" -eq 1
+            test "$(jq length <<<"$stable_drafts")" -eq 0
+            {
+              echo "release_id=$release_id"
+              echo "mode=published"
+              echo "retry_tag=$release_tag"
+            } >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute the read-only semantic version and notes plan
+        id: plan
+        env:
+          PLANNER_OID: ${{ steps.trust-snapshots.outputs.planner_oid }}
+          PLANNER_SCRIPT: ${{ steps.trust-snapshots.outputs.planner_path }}
+          OBJECT_FORMAT: ${{ steps.trust-snapshots.outputs.object_format }}
+          RELEASE_CONFIG: ${{ steps.trust-snapshots.outputs.release_config_path }}
+          RELEASE_CONFIG_OID: ${{ steps.trust-snapshots.outputs.release_config_oid }}
+          RETRY_TAG: ${{ steps.resume.outputs.retry_tag }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(node -p "require('./node_modules/semantic-release/package.json').version")" = 25.0.8
+          test "$(node -p "require('./node_modules/@semantic-release/commit-analyzer/package.json').version")" = 13.0.1
+          test "$(node -p "require('./node_modules/@semantic-release/release-notes-generator/package.json').version")" = 14.1.1
+          plan_path="${RUNNER_TEMP:?}/semantic-release-plan.json"
+          exec {planner_fd}<"$PLANNER_SCRIPT"
+          exec {release_config_fd}<"$RELEASE_CONFIG"
+          python3 - \
+            "$OBJECT_FORMAT" \
+            "$PLANNER_OID" \
+            "$RELEASE_CONFIG_OID" \
+            "$plan_path" \
+            "$RETRY_TAG" \
+            "$SOURCE_SHA" \
+            3<&"$planner_fd" 4<&"$release_config_fd" <<'PY'
+          import fcntl
+          import hashlib
+          import os
+          import re
+          import subprocess
+          import sys
+
+          object_format = sys.argv[1]
+          oid_lengths = {"sha1": 40, "sha256": 64}
+          oid_length = oid_lengths.get(object_format)
+          if oid_length is None:
+              raise SystemExit("unsupported Git object format")
+
+          def exact_blob(descriptor, expected_oid, label):
+              if re.fullmatch(rf"[0-9a-f]{{{oid_length}}}", expected_oid) is None:
+                  raise SystemExit(f"invalid expected {label} Git blob OID")
+              payload = os.read(descriptor, 1048577)
+              if not payload or len(payload) > 1048576:
+                  raise SystemExit(f"invalid bounded {label} Git blob")
+              header = f"blob {len(payload)}\0".encode("ascii")
+              actual_oid = hashlib.new(object_format, header + payload).hexdigest()
+              if actual_oid != expected_oid:
+                  raise SystemExit(f"{label} Git blob changed before execution")
+              return payload
+
+          planner = exact_blob(3, sys.argv[2], "release planner")
+          release_config = exact_blob(4, sys.argv[3], "release config")
+          if not all(
+              hasattr(os, name)
+              for name in ("memfd_create", "MFD_ALLOW_SEALING")
+          ):
+              raise SystemExit("sealed in-memory release config is unavailable")
+          config_fd = os.memfd_create(
+              "semantic-release-config",
+              flags=os.MFD_ALLOW_SEALING,
+          )
+          try:
+              offset = 0
+              while offset < len(release_config):
+                  written = os.write(config_fd, release_config[offset:])
+                  if written <= 0:
+                      raise SystemExit("short write to sealed release config")
+                  offset += written
+              os.fchmod(config_fd, 0o400)
+              os.lseek(config_fd, 0, os.SEEK_SET)
+              fcntl.fcntl(
+                  config_fd,
+                  fcntl.F_ADD_SEALS,
+                  fcntl.F_SEAL_SEAL
+                  | fcntl.F_SEAL_SHRINK
+                  | fcntl.F_SEAL_GROW
+                  | fcntl.F_SEAL_WRITE,
+              )
+              completed = subprocess.run(
+                  [
+                      "node",
+                      "--input-type=module",
+                      "-",
+                      "--config",
+                      f"/proc/self/fd/{config_fd}",
+                      "--output",
+                      sys.argv[4],
+                      "--retry-tag",
+                      sys.argv[5],
+                      "--source-sha",
+                      sys.argv[6],
+                  ],
+                  input=planner,
+                  pass_fds=(config_fd,),
+                  check=False,
+              )
+          finally:
+              os.close(config_fd)
+          raise SystemExit(completed.returncode)
+          PY
+          exec {planner_fd}<&-
+          exec {release_config_fd}<&-
+          plan_json="$(cat -- "$plan_path")"
+          jq -e --arg sha "$SOURCE_SHA" '
+            if .release == false then
+              keys == ["release"]
+            else
+              .release == true
+              and keys == ["gitHead", "gitTag", "notes", "planSha256", "release", "releaseDate", "version"]
+              and .gitHead == $sha
+              and (.version | test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+              and .gitTag == ("v" + .version)
+              and (.notes | type == "string" and length > 0)
+              and (.releaseDate | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))
+              and (.planSha256 | test("^[0-9a-f]{64}$"))
+            end
+          ' <<<"$plan_json" >/dev/null
+          plan_json_sha256="$(printf '%s' "$plan_json" | sha256sum | awk '{print $1}')"
+          [[ "$plan_json_sha256" =~ ^[0-9a-f]{64}$ ]]
+          {
+            echo "release=$(jq -r .release <<<"$plan_json")"
+            echo "plan_json_sha256=$plan_json_sha256"
+            echo "plan_path=$plan_path"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Verify an exact already-published retry plan
+        if: steps.resume.outputs.mode == 'published'
+        env:
+          APP_BOT_LOGIN: ${{ steps.release-bot.outputs.login }}
+          BOUNDARY_OID: ${{ steps.trust-snapshots.outputs.boundary_oid }}
+          BOUNDARY_SCRIPT: ${{ steps.trust-snapshots.outputs.boundary_path }}
+          EXPECTED_PLAN_JSON_SHA256: ${{ steps.plan.outputs.plan_json_sha256 }}
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          OBJECT_FORMAT: ${{ steps.trust-snapshots.outputs.object_format }}
+          PLAN_PATH: ${{ steps.plan.outputs.plan_path }}
+          RELEASE_ID: ${{ steps.resume.outputs.release_id }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          plan_json="$(cat -- "$PLAN_PATH")"
+          plan_json_sha256="$(printf '%s' "$plan_json" | sha256sum | awk '{print $1}')"
+          test "$plan_json_sha256" = "$EXPECTED_PLAN_JSON_SHA256"
+          test "$(jq -r .release <<<"$plan_json")" = true
+          release_tag="$(jq -er .gitTag <<<"$plan_json")"
+          test "$release_tag" = "${{ steps.resume.outputs.retry_tag }}"
+          plan_digest="$(jq -er .planSha256 <<<"$plan_json")"
+          plan_date="$(jq -er .releaseDate <<<"$plan_json")"
+          body="$(jq -r --arg sha "$SOURCE_SHA" --arg digest "$plan_digest" --arg date "$plan_date" '
+            .notes
+            + "\n\n<!-- lit-mlx90-semantic-plan-v1\nsource-sha: " + $sha
+            + "\nplan-date: " + $date
+            + "\nplan-sha256: " + $digest + "\n-->"
+          ' <<<"$plan_json")"
+          release_body_sha256="$(
+            printf '%s' "$body" | sha256sum | awk '{print $1}'
           )"
-          echo "::add-mask::${auth_header}"
-          trap 'git config --local --unset-all http.https://github.com/.extraheader || true' EXIT
-          git config --local http.https://github.com/.extraheader \
-            "AUTHORIZATION: basic ${auth_header}"
-          npx --yes \
-            --package semantic-release@25 \
-            --package @semantic-release/commit-analyzer@13 \
-            --package @semantic-release/github@12 \
-            --package @semantic-release/release-notes-generator@14 \
-            --package conventional-changelog-conventionalcommits@10 \
-            semantic-release
+          [[ "$release_body_sha256" =~ ^[0-9a-f]{64}$ ]]
+          release="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")"
+          release_pages="$(gh api --paginate --slurp \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100")"
+          releases="$(jq -ce '[.[][]]' <<<"$release_pages")"
+          test "$(jq --arg tag "$release_tag" --argjson id "$RELEASE_ID" '
+            ([.[] | select(.tag_name == $tag)] | length) == 1
+            and ([.[] | select(.id == $id)] | length) == 1
+          ' <<<"$releases")" = true
+          by_tag="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}")"
+          for exact_release in "$release" "$by_tag"; do
+            jq -e \
+              --arg author "$APP_BOT_LOGIN" \
+              --arg body "$body" \
+              --arg sha "$SOURCE_SHA" \
+              --arg tag "$release_tag" \
+              --argjson release_id "$RELEASE_ID" '
+                .id == $release_id
+                and .tag_name == $tag
+                and .target_commitish == $sha
+                and .name == $tag
+                and .body == $body
+                and .draft == false
+                and .prerelease == false
+                and .immutable == true
+                and (.published_at | type == "string" and length > 0)
+                and .author.login == $author
+              ' <<<"$exact_release" >/dev/null
+          done
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/commits/${release_tag}" --jq .sha)" = \
+            "$SOURCE_SHA"
+          exec {boundary_fd}<"$BOUNDARY_SCRIPT"
+          python3 - "$OBJECT_FORMAT" "$BOUNDARY_OID" "$SOURCE_SHA" 3<&"$boundary_fd" <<'PY'
+          import hashlib
+          import os
+          import re
+          import subprocess
+          import sys
+
+          object_format, expected_oid, source_sha = sys.argv[1:]
+          oid_lengths = {"sha1": 40, "sha256": 64}
+          oid_length = oid_lengths.get(object_format)
+          if oid_length is None:
+              raise SystemExit("unsupported Git object format")
+          if re.fullmatch(rf"[0-9a-f]{{{oid_length}}}", expected_oid) is None:
+              raise SystemExit("invalid expected boundary Git blob OID")
+          payload = os.read(3, 1048577)
+          if not payload or len(payload) > 1048576:
+              raise SystemExit("invalid bounded boundary Git blob")
+          header = f"blob {len(payload)}\0".encode("ascii")
+          actual_oid = hashlib.new(object_format, header + payload).hexdigest()
+          if actual_oid != expected_oid:
+              raise SystemExit("boundary Git blob changed before execution")
+          completed = subprocess.run(
+              ["bash", "-s", "--", source_sha],
+              input=payload,
+              check=False,
+          )
+          raise SystemExit(completed.returncode)
+          PY
+          exec {boundary_fd}<&-
+
+      - name: Persist and bind the App draft before its lightweight tag
+        if: >-
+          steps.resume.outputs.mode != 'published'
+          && steps.plan.outputs.release == 'true'
+        id: draft
+        env:
+          APP_BOT_LOGIN: ${{ steps.release-bot.outputs.login }}
+          BOUNDARY_OID: ${{ steps.trust-snapshots.outputs.boundary_oid }}
+          BOUNDARY_SCRIPT: ${{ steps.trust-snapshots.outputs.boundary_path }}
+          EXPECTED_PLAN_JSON_SHA256: ${{ steps.plan.outputs.plan_json_sha256 }}
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          OBJECT_FORMAT: ${{ steps.trust-snapshots.outputs.object_format }}
+          PLANNER_OID: ${{ steps.trust-snapshots.outputs.planner_oid }}
+          PLANNER_SCRIPT: ${{ steps.trust-snapshots.outputs.planner_path }}
+          RELEASE_CONFIG: ${{ steps.trust-snapshots.outputs.release_config_path }}
+          RELEASE_CONFIG_OID: ${{ steps.trust-snapshots.outputs.release_config_oid }}
+          RESUME_RELEASE_ID: ${{ steps.resume.outputs.release_id }}
+          RETRY_TAG: ${{ steps.resume.outputs.retry_tag }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          exec {boundary_fd}<"$BOUNDARY_SCRIPT"
+          python3 - "$OBJECT_FORMAT" "$BOUNDARY_OID" "$SOURCE_SHA" 3<&"$boundary_fd" <<'PY'
+          import hashlib
+          import os
+          import re
+          import subprocess
+          import sys
+
+          object_format, expected_oid, source_sha = sys.argv[1:]
+          oid_lengths = {"sha1": 40, "sha256": 64}
+          oid_length = oid_lengths.get(object_format)
+          if oid_length is None:
+              raise SystemExit("unsupported Git object format")
+          if re.fullmatch(rf"[0-9a-f]{{{oid_length}}}", expected_oid) is None:
+              raise SystemExit("invalid expected boundary Git blob OID")
+          payload = os.read(3, 1048577)
+          if not payload or len(payload) > 1048576:
+              raise SystemExit("invalid bounded boundary Git blob")
+          header = f"blob {len(payload)}\0".encode("ascii")
+          actual_oid = hashlib.new(object_format, header + payload).hexdigest()
+          if actual_oid != expected_oid:
+              raise SystemExit("boundary Git blob changed before execution")
+          completed = subprocess.run(
+              ["bash", "-s", "--", source_sha],
+              input=payload,
+              check=False,
+          )
+          raise SystemExit(completed.returncode)
+          PY
+          exec {boundary_fd}<&-
+          regenerated_plan_dir="$(mktemp -d "${RUNNER_TEMP:?}/semantic-release-mutating.XXXXXX")"
+          chmod 0700 "$regenerated_plan_dir"
+          regenerated_plan_path="${regenerated_plan_dir}/plan.json"
+          trap 'rm -f -- "$regenerated_plan_path"; rmdir -- "$regenerated_plan_dir"' EXIT
+          exec {planner_fd}<"$PLANNER_SCRIPT"
+          exec {release_config_fd}<"$RELEASE_CONFIG"
+          python3 - \
+            "$OBJECT_FORMAT" \
+            "$PLANNER_OID" \
+            "$RELEASE_CONFIG_OID" \
+            "$regenerated_plan_path" \
+            "$RETRY_TAG" \
+            "$SOURCE_SHA" \
+            3<&"$planner_fd" 4<&"$release_config_fd" <<'PY'
+          import fcntl
+          import hashlib
+          import os
+          import re
+          import subprocess
+          import sys
+
+          object_format = sys.argv[1]
+          oid_lengths = {"sha1": 40, "sha256": 64}
+          oid_length = oid_lengths.get(object_format)
+          if oid_length is None:
+              raise SystemExit("unsupported Git object format")
+
+          def exact_blob(descriptor, expected_oid, label):
+              if re.fullmatch(rf"[0-9a-f]{{{oid_length}}}", expected_oid) is None:
+                  raise SystemExit(f"invalid expected {label} Git blob OID")
+              payload = os.read(descriptor, 1048577)
+              if not payload or len(payload) > 1048576:
+                  raise SystemExit(f"invalid bounded {label} Git blob")
+              header = f"blob {len(payload)}\0".encode("ascii")
+              actual_oid = hashlib.new(object_format, header + payload).hexdigest()
+              if actual_oid != expected_oid:
+                  raise SystemExit(f"{label} Git blob changed before execution")
+              return payload
+
+          planner = exact_blob(3, sys.argv[2], "release planner")
+          release_config = exact_blob(4, sys.argv[3], "release config")
+          if not all(
+              hasattr(os, name)
+              for name in ("memfd_create", "MFD_ALLOW_SEALING")
+          ):
+              raise SystemExit("sealed in-memory release config is unavailable")
+          config_fd = os.memfd_create(
+              "semantic-release-config",
+              flags=os.MFD_ALLOW_SEALING,
+          )
+          try:
+              offset = 0
+              while offset < len(release_config):
+                  written = os.write(config_fd, release_config[offset:])
+                  if written <= 0:
+                      raise SystemExit("short write to sealed release config")
+                  offset += written
+              os.fchmod(config_fd, 0o400)
+              os.lseek(config_fd, 0, os.SEEK_SET)
+              fcntl.fcntl(
+                  config_fd,
+                  fcntl.F_ADD_SEALS,
+                  fcntl.F_SEAL_SEAL
+                  | fcntl.F_SEAL_SHRINK
+                  | fcntl.F_SEAL_GROW
+                  | fcntl.F_SEAL_WRITE,
+              )
+              completed = subprocess.run(
+                  [
+                      "node",
+                      "--input-type=module",
+                      "-",
+                      "--config",
+                      f"/proc/self/fd/{config_fd}",
+                      "--output",
+                      sys.argv[4],
+                      "--retry-tag",
+                      sys.argv[5],
+                      "--source-sha",
+                      sys.argv[6],
+                  ],
+                  input=planner,
+                  pass_fds=(config_fd,),
+                  check=False,
+              )
+          finally:
+              os.close(config_fd)
+          raise SystemExit(completed.returncode)
+          PY
+          exec {planner_fd}<&-
+          exec {release_config_fd}<&-
+          plan_json="$(cat -- "$regenerated_plan_path")"
+          rm -f -- "$regenerated_plan_path"
+          rmdir -- "$regenerated_plan_dir"
+          trap - EXIT
+          plan_json_sha256="$(printf '%s' "$plan_json" | sha256sum | awk '{print $1}')"
+          test "$plan_json_sha256" = "$EXPECTED_PLAN_JSON_SHA256"
+          jq -e --arg sha "$SOURCE_SHA" '
+            type == "object"
+            and keys == ["gitHead", "gitTag", "notes", "planSha256", "release", "releaseDate", "version"]
+            and .release == true
+            and .gitHead == $sha
+            and (.version | type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+            and .gitTag == ("v" + .version)
+            and (.notes | type == "string" and length > 0)
+            and (.releaseDate | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))
+            and (.planSha256 | type == "string" and test("^[0-9a-f]{64}$"))
+          ' <<<"$plan_json" >/dev/null
+          release_tag="$(jq -er .gitTag <<<"$plan_json")"
+          plan_digest="$(jq -er .planSha256 <<<"$plan_json")"
+          plan_date="$(jq -er .releaseDate <<<"$plan_json")"
+          body="$(jq -r --arg sha "$SOURCE_SHA" --arg digest "$plan_digest" --arg date "$plan_date" '
+            .notes
+            + "\n\n<!-- lit-mlx90-semantic-plan-v1\nsource-sha: " + $sha
+            + "\nplan-date: " + $date
+            + "\nplan-sha256: " + $digest + "\n-->"
+          ' <<<"$plan_json")"
+          release_body_sha256="$(
+            printf '%s' "$body" | sha256sum | awk '{print $1}'
+          )"
+          [[ "$release_body_sha256" =~ ^[0-9a-f]{64}$ ]]
+          release_pages="$(gh api --paginate --slurp \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100")"
+          releases="$(jq -ce '[.[][]]' <<<"$release_pages")"
+          stable_drafts="$(jq -ce '[
+            .[]
+            | select(.draft == true and .prerelease == false)
+            | select(.tag_name | test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+          ]' <<<"$releases")"
+          tag_releases="$(jq -ce --arg tag "$release_tag" '[
+            .[] | select(.tag_name == $tag)
+          ]' <<<"$releases")"
+          if [ -n "$RESUME_RELEASE_ID" ]; then
+            [[ "$RESUME_RELEASE_ID" =~ ^[1-9][0-9]*$ ]]
+            test "$(jq length <<<"$stable_drafts")" -eq 1
+            test "$(jq -er '.[0].id' <<<"$stable_drafts")" = "$RESUME_RELEASE_ID"
+            test "$(jq length <<<"$tag_releases")" -eq 1
+            release="$(jq -ce '.[0]' <<<"$tag_releases")"
+            test "$(jq -er .id <<<"$release")" = "$RESUME_RELEASE_ID"
+          else
+            test "$(jq length <<<"$stable_drafts")" -eq 0
+            test "$(jq length <<<"$tag_releases")" -eq 0
+            exact_refs="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${release_tag}")"
+            test "$(jq --arg ref "refs/tags/${release_tag}" '[
+              .[] | select(.ref == $ref)
+            ] | length' <<<"$exact_refs")" -eq 0
+            draft_payload="$(jq -cn \
+              --arg body "$body" \
+              --arg sha "$SOURCE_SHA" \
+              --arg tag "$release_tag" '
+                {
+                  tag_name: $tag,
+                  target_commitish: $sha,
+                  name: $tag,
+                  body: $body,
+                  draft: true,
+                  prerelease: false,
+                  make_latest: "false"
+                }
+              ')"
+            jq -e \
+              --arg body "$body" \
+              --arg sha "$SOURCE_SHA" \
+              --arg tag "$release_tag" '
+                keys == ["body", "draft", "make_latest", "name", "prerelease", "tag_name", "target_commitish"]
+                and .tag_name == $tag
+                and .target_commitish == $sha
+                and .name == $tag
+                and .body == $body
+                and .draft == true
+                and .prerelease == false
+                and .make_latest == "false"
+              ' <<<"$draft_payload" >/dev/null
+            release="$(gh api --method POST \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/${GITHUB_REPOSITORY}/releases" \
+              --input - <<<"$draft_payload")"
+          fi
+          release_id="$(jq -er '.id | select(type == "number" and . > 0)' <<<"$release")"
+          jq -e \
+            --arg author "$APP_BOT_LOGIN" \
+            --arg body "$body" \
+            --arg sha "$SOURCE_SHA" \
+            --arg tag "$release_tag" \
+            --argjson release_id "$release_id" '
+              .id == $release_id
+              and .tag_name == $tag
+              and .target_commitish == $sha
+              and .name == $tag
+              and .body == $body
+              and .draft == true
+              and .prerelease == false
+              and .immutable == false
+              and .published_at == null
+              and .author.login == $author
+            ' <<<"$release" >/dev/null
+          exact_refs="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${release_tag}")"
+          exact_refs="$(jq -ce --arg ref "refs/tags/${release_tag}" '[
+            .[] | select(.ref == $ref)
+          ]' <<<"$exact_refs")"
+          test "$(jq length <<<"$exact_refs")" -le 1
+          if [ "$(jq length <<<"$exact_refs")" -eq 0 ]; then
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${release_tag}" \
+              -f sha="$SOURCE_SHA" >/dev/null
+          fi
+          exact_refs="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/${release_tag}")"
+          jq -e --arg ref "refs/tags/${release_tag}" --arg sha "$SOURCE_SHA" '
+            [.[] | select(
+              .ref == $ref
+              and .object.type == "commit"
+              and .object.sha == $sha
+            )] | length == 1
+          ' <<<"$exact_refs" >/dev/null
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/commits/${release_tag}" --jq .sha)" = \
+            "$SOURCE_SHA"
+          by_id="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases/${release_id}")"
+          rebound_pages="$(gh api --paginate --slurp \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100")"
+          rebound_releases="$(jq -ce '[.[][]]' <<<"$rebound_pages")"
+          test "$(jq --arg tag "$release_tag" --argjson id "$release_id" '
+            ([.[] | select(.tag_name == $tag)] | length) == 1
+            and ([.[] | select(.id == $id)] | length) == 1
+            and ([
+              .[]
+              | select(.draft == true and .prerelease == false)
+              | select(.tag_name | test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+            ] | length) == 1
+          ' <<<"$rebound_releases")" = true
+          for exact_release in "$by_id" "$(jq -ce --argjson id "$release_id" '[
+            .[] | select(.id == $id)
+          ][0]' <<<"$rebound_releases")"; do
+            jq -e \
+              --arg author "$APP_BOT_LOGIN" \
+              --arg body "$body" \
+              --arg sha "$SOURCE_SHA" \
+              --arg tag "$release_tag" \
+              --argjson release_id "$release_id" '
+                .id == $release_id
+                and .tag_name == $tag
+                and .target_commitish == $sha
+                and .name == $tag
+                and .body == $body
+                and .draft == true
+                and .prerelease == false
+                and .immutable == false
+                and .published_at == null
+                and .author.login == $author
+              ' <<<"$exact_release" >/dev/null
+          done
+          exec {boundary_fd}<"$BOUNDARY_SCRIPT"
+          python3 - "$OBJECT_FORMAT" "$BOUNDARY_OID" "$SOURCE_SHA" 3<&"$boundary_fd" <<'PY'
+          import hashlib
+          import os
+          import re
+          import subprocess
+          import sys
+
+          object_format, expected_oid, source_sha = sys.argv[1:]
+          oid_lengths = {"sha1": 40, "sha256": 64}
+          oid_length = oid_lengths.get(object_format)
+          if oid_length is None:
+              raise SystemExit("unsupported Git object format")
+          if re.fullmatch(rf"[0-9a-f]{{{oid_length}}}", expected_oid) is None:
+              raise SystemExit("invalid expected boundary Git blob OID")
+          payload = os.read(3, 1048577)
+          if not payload or len(payload) > 1048576:
+              raise SystemExit("invalid bounded boundary Git blob")
+          header = f"blob {len(payload)}\0".encode("ascii")
+          actual_oid = hashlib.new(object_format, header + payload).hexdigest()
+          if actual_oid != expected_oid:
+              raise SystemExit("boundary Git blob changed before execution")
+          completed = subprocess.run(
+              ["bash", "-s", "--", source_sha],
+              input=payload,
+              check=False,
+          )
+          raise SystemExit(completed.returncode)
+          PY
+          exec {boundary_fd}<&-
+          {
+            echo "release_id=$release_id"
+            echo "release_tag=$release_tag"
+            echo "release_body_sha256=$release_body_sha256"
+            echo "source_sha=$SOURCE_SHA"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Dispatch the exact tag-bound release build
+        if: steps.draft.outputs.release_id != ''
+        env:
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          RELEASE_BODY_SHA256: ${{ steps.draft.outputs.release_body_sha256 }}
+          RELEASE_ID: ${{ steps.draft.outputs.release_id }}
+          RELEASE_TAG: ${{ steps.draft.outputs.release_tag }}
+          SOURCE_SHA: ${{ steps.draft.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          gh workflow run container-build-publish.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$RELEASE_TAG" \
+            -f release_body_sha256="$RELEASE_BODY_SHA256" \
+            -f release_id="$RELEASE_ID" \
+            -f release_tag="$RELEASE_TAG" \
+            -f source_sha="$SOURCE_SHA" \
+            -f semantic_release_run_id="$GITHUB_RUN_ID" \
+            -f semantic_release_run_attempt="$GITHUB_RUN_ATTEMPT"
 
   release_dry_run:
     name: Semantic Release (dry run)
