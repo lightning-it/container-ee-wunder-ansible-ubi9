@@ -67,26 +67,27 @@ jobs:
       REGISTRY: quay.io
 
     steps:
-      - name: Mint read-only release identity App token
-        id: release-read-app
+      - name: Mint draft-visible release identity App token
+        id: release-draft-app
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
         with:
           client-id: ${{ vars.RELEASE_AUTOMATION_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: container-ee-wunder-ansible-ubi9
-          permission-contents: read
+          # GitHub hides draft releases from tokens without push-equivalent access.
+          permission-contents: write
 
       - name: Validate exact tag-bound draft dispatch
         id: release-trigger
         env:
           ACTIONS_GH_TOKEN: ${{ github.token }}
-          APP_INSTALLATION_ID: ${{ steps.release-read-app.outputs.installation-id }}
-          APP_SLUG: ${{ steps.release-read-app.outputs.app-slug }}
+          APP_INSTALLATION_ID: ${{ steps.release-draft-app.outputs.installation-id }}
+          APP_SLUG: ${{ steps.release-draft-app.outputs.app-slug }}
           DISPATCH_ACTOR: ${{ github.actor }}
           DISPATCH_SENDER_LOGIN: ${{ github.event.sender.login }}
           DISPATCH_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-          GH_TOKEN: ${{ steps.release-read-app.outputs.token }}
+          GH_TOKEN: ${{ steps.release-draft-app.outputs.token }}
           RELEASE_BODY_SHA256: ${{ inputs.release_body_sha256 }}
           RELEASE_ID: ${{ inputs.release_id }}
           RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
@@ -347,7 +348,7 @@ jobs:
       - name: Validate exact draft and live source boundary
         shell: bash
         env:
-          GH_TOKEN: ${{ steps.release-read-app.outputs.token }}
+          GH_TOKEN: ${{ steps.release-draft-app.outputs.token }}
           RELEASE_BODY_SHA256: ${{ inputs.release_body_sha256 }}
           RELEASE_ID: ${{ inputs.release_id }}
           SOURCE_SHA: ${{ inputs.source_sha }}
@@ -769,7 +770,7 @@ jobs:
           DISPATCH_ACTOR: ${{ github.actor }}
           DISPATCH_SENDER_LOGIN: ${{ github.event.sender.login }}
           DISPATCH_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-          GH_TOKEN: ${{ steps.release-read-app.outputs.token }}
+          GH_TOKEN: ${{ steps.release-draft-app.outputs.token }}
           RELEASE_BODY_SHA256: ${{ inputs.release_body_sha256 }}
           RELEASE_ID: ${{ inputs.release_id }}
           SEMANTIC_RELEASE_RUN_ATTEMPT: ${{ inputs.semantic_release_run_attempt }}
