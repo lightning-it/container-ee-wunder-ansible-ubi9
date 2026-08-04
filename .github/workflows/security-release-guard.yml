@@ -1,0 +1,1240 @@
+# yamllint disable rule:truthy rule:line-length
+---
+name: MLX-90 evidence-bound update guard
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: Validate evidence and request native auto-merge
+    runs-on: ubuntu-latest
+    outputs:
+      app_login: ${{ steps.release-bot.outputs.login }}
+      evidence_id: ${{ steps.lease.outputs.evidence_id }}
+      expected_head: ${{ steps.live.outputs.head_sha }}
+      expected_main: ${{ steps.live.outputs.main_sha }}
+      mode: ${{ steps.classify.outputs.mode }}
+      producer_version: ${{ steps.lease.outputs.producer_version }}
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Classify protected MLX-90 paths fail closed
+        id: classify
+        env:
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          live_pr="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          jq -e \
+            --arg head "$EVENT_HEAD_SHA" '
+              .state == "open"
+              and .base.ref == "main"
+              and .head.sha == $head
+            ' <<<"$live_pr" >/dev/null
+          head_ref="$(jq -r '.head.ref // ""' <<<"$live_pr")"
+          test -n "$head_ref"
+          file_pages="$(
+            gh api --paginate --slurp \
+              "repos/${REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100"
+          )"
+          files="$(jq '[.[][]]' <<<"$file_pages")"
+          jq -e 'type == "array" and length > 0' <<<"$files" >/dev/null
+          changed_files="$(jq -r '.changed_files // ""' <<<"$live_pr")"
+          [[ "$changed_files" =~ ^[1-9][0-9]*$ ]]
+          test "$(jq 'length' <<<"$files")" -eq "$changed_files"
+          protected_count="$(jq '[.[] | select(
+            .filename == ".lit/security-release-receipt.json"
+            or .filename == "collections/requirements-base.yml"
+            or .previous_filename == ".lit/security-release-receipt.json"
+            or .previous_filename == "collections/requirements-base.yml"
+          )] | length' <<<"$files")"
+          if [[ "$head_ref" =~ ^security/mlx90-cleanup-[a-z0-9][a-z0-9._-]*-[0-9a-f]{12}$ ]]; then
+            jq -e '
+              length == 1
+              and .[0].filename == ".lit/security-release-receipt.json"
+              and .[0].status == "removed"
+            ' <<<"$files" >/dev/null || {
+              echo "ERROR: cleanup PRs may only delete the MLX-90 receipt." >&2
+              exit 1
+            }
+            echo "mode=cleanup" >>"$GITHUB_OUTPUT"
+          elif [[ "$head_ref" == security/mlx90-* ]]; then
+            jq -e '
+              length == 2
+              and (map(.filename) | sort) == [
+                ".lit/security-release-receipt.json",
+                "collections/requirements-base.yml"
+              ]
+              and all(.[]; .status == "added" or .status == "modified")
+            ' <<<"$files" >/dev/null || {
+              echo "ERROR: security PRs must contain exactly the receipt and requirements update." >&2
+              exit 1
+            }
+            echo "mode=update" >>"$GITHUB_OUTPUT"
+          else
+            if [ "$protected_count" -ne 0 ]; then
+              echo "ERROR: ordinary PRs may not change protected MLX-90 paths." >&2
+              exit 1
+            fi
+            echo "mode=ordinary" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Confirm ordinary PR leaves protected MLX-90 paths unchanged
+        if: steps.classify.outputs.mode == 'ordinary'
+        run: echo "Ordinary PR does not modify the MLX-90 receipt or collection requirement."
+
+      - name: Mint the least-privilege release App token
+        if: steps.classify.outputs.mode != 'ordinary'
+        id: release-app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: container-ee-wunder-ansible-ubi9
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Resolve the exact release App identity
+        if: steps.classify.outputs.mode != 'ordinary'
+        id: release-bot
+        env:
+          APP_INSTALLATION_ID: ${{ steps.release-app.outputs.installation-id }}
+          APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+        run: |
+          set -euo pipefail
+          test "$APP_SLUG" = "lightning-it-release-automation"
+          test "$APP_INSTALLATION_ID" = "148019054"
+          bot_json="$(gh api "users/${APP_SLUG}%5Bbot%5D")"
+          login="$(jq -r '.login // ""' <<<"$bot_json")"
+          test "$login" = "lightning-it-release-automation[bot]"
+          actual_repositories="$(
+            gh api --paginate "installation/repositories?per_page=100" \
+              | jq -sc '[.[].repositories[].full_name] | sort | unique'
+          )"
+          jq -e \
+            --argjson actual "$actual_repositories" '
+              $actual == [
+                "lightning-it/container-ee-wunder-ansible-ubi9"
+              ]
+            ' <<<"{}" >/dev/null
+          echo "login=$login" >>"$GITHUB_OUTPUT"
+
+      - name: Mint read-only producer evidence token
+        if: steps.classify.outputs.mode != 'ordinary'
+        id: producer-app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ansible-collection-supplementary
+          permission-contents: read
+
+      - name: Verify exact producer evidence App scope
+        if: steps.classify.outputs.mode != 'ordinary'
+        env:
+          APP_INSTALLATION_ID: ${{ steps.producer-app.outputs.installation-id }}
+          APP_SLUG: ${{ steps.producer-app.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.producer-app.outputs.token }}
+        run: |
+          set -euo pipefail
+          test "$APP_SLUG" = "lightning-it-release-automation"
+          test "$APP_INSTALLATION_ID" = "148019054"
+          actual_repositories="$(
+            gh api --paginate "installation/repositories?per_page=100" \
+              | jq -sc '[.[].repositories[].full_name] | sort | unique'
+          )"
+          test "$actual_repositories" = \
+            '["lightning-it/ansible-collection-supplementary"]'
+
+      - name: Mint read-only final-acceptance evidence token
+        if: steps.classify.outputs.mode == 'cleanup'
+        id: acceptance-app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: modulix-validation
+          permission-actions: read
+          permission-contents: read
+
+      - name: Verify exact final-acceptance App installation and scope
+        if: steps.classify.outputs.mode == 'cleanup'
+        env:
+          APP_INSTALLATION_ID: ${{ steps.acceptance-app.outputs.installation-id }}
+          APP_SLUG: ${{ steps.acceptance-app.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.acceptance-app.outputs.token }}
+        run: |
+          set -euo pipefail
+          test "$APP_SLUG" = "lightning-it-release-automation"
+          test "$APP_INSTALLATION_ID" = "148019054"
+          actual_repositories="$(
+            gh api --paginate "installation/repositories?per_page=100" \
+              | jq -sc '[.[].repositories[].full_name] | sort | unique'
+          )"
+          jq -e \
+            --argjson actual "$actual_repositories" '
+              $actual == ["lightning-it/modulix-validation"]
+            ' <<<"{}" >/dev/null
+
+      - name: Revoke any stale auto-merge request
+        if: steps.classify.outputs.mode != 'ordinary'
+        env:
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          owner="${REPOSITORY%%/*}"
+          name="${REPOSITORY#*/}"
+          # shellcheck disable=SC2016
+          enabled="$(
+            gh api graphql \
+              -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){autoMergeRequest{__typename}}}}' \
+              -f owner="$owner" \
+              -f name="$name" \
+              -F number="$PR_NUMBER" \
+              --jq '.data.repository.pullRequest.autoMergeRequest != null'
+          )"
+          case "$enabled" in
+            true) gh pr merge "$PR_URL" --disable-auto ;;
+            false) ;;
+            *) echo "ERROR: unable to determine auto-merge state." >&2; exit 1 ;;
+          esac
+
+      - name: Validate live PR identity, ancestry, commit, and exact file set
+        if: steps.classify.outputs.mode != 'ordinary'
+        id: live
+        env:
+          APP_LOGIN: ${{ steps.release-bot.outputs.login }}
+          CLASSIFIED_MODE: ${{ steps.classify.outputs.mode }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          live_main="$(gh api "repos/${REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$live_main" =~ ^[0-9a-f]{40}$ ]]
+          live_pr="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          jq -e \
+            --arg app "$APP_LOGIN" \
+            --arg head "$EVENT_HEAD_SHA" \
+            --arg main "$live_main" \
+            --arg repo "$REPOSITORY" '
+              .state == "open"
+              and .draft == false
+              and .user.login == $app
+              and .base.ref == "main"
+              and .base.sha == $main
+              and .head.sha == $head
+              and .head.repo.full_name == $repo
+              and .commits == 1
+            ' <<<"$live_pr" >/dev/null
+          head_ref="$(jq -r '.head.ref // ""' <<<"$live_pr")"
+          case "$CLASSIFIED_MODE" in
+            update)
+              [[ "$head_ref" == security/mlx90-* ]]
+              [[ "$head_ref" != security/mlx90-cleanup-* ]]
+              ;;
+            cleanup)
+              [[ "$head_ref" =~ ^security/mlx90-cleanup-[a-z0-9][a-z0-9._-]*-[0-9a-f]{12}$ ]]
+              ;;
+            *)
+              echo "ERROR: invalid protected PR classification." >&2
+              exit 1
+              ;;
+          esac
+          commit="$(gh api "repos/${REPOSITORY}/commits/${EVENT_HEAD_SHA}")"
+          jq -e \
+            --arg app "$APP_LOGIN" \
+            --arg main "$live_main" '
+              (.parents | length) == 1
+              and .parents[0].sha == $main
+              and .author.login == $app
+              and .committer.login == $app
+            ' <<<"$commit" >/dev/null
+          file_pages="$(
+            gh api --paginate --slurp \
+              "repos/${REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100"
+          )"
+          files="$(jq '[.[][]]' <<<"$file_pages")"
+          test "$(jq 'length' <<<"$files")" \
+            -eq "$(jq -r '.changed_files' <<<"$live_pr")"
+          acceptance_url=""
+          acceptance_digest=""
+          if [ "$CLASSIFIED_MODE" = update ]; then
+            jq -e '
+              length == 2
+              and (map(.filename) | sort) == [
+                ".lit/security-release-receipt.json",
+                "collections/requirements-base.yml"
+              ]
+              and all(.[]; .status == "added" or .status == "modified")
+            ' <<<"$files" >/dev/null
+            jq -e \
+              --arg main "$live_main" '
+                (.commit.message | contains("Security-Evidence-SHA256: sha256:"))
+                and (.commit.message | contains("Security-Base-SHA: " + $main))
+              ' <<<"$commit" >/dev/null
+          else
+            jq -e '
+              length == 1
+              and .[0].filename == ".lit/security-release-receipt.json"
+              and .[0].status == "removed"
+            ' <<<"$files" >/dev/null
+            acceptance_urls="$(jq -c '[
+              .commit.message
+              | split("\n")[]
+              | select(startswith("Final-Acceptance-URL:"))
+            ]' <<<"$commit")"
+            acceptance_digests="$(jq -c '[
+              .commit.message
+              | split("\n")[]
+              | select(startswith("Final-Acceptance-SHA256:"))
+            ]' <<<"$commit")"
+            test "$(jq 'length' <<<"$acceptance_urls")" -eq 1
+            test "$(jq 'length' <<<"$acceptance_digests")" -eq 1
+            acceptance_url="$(jq -er '.[0] | capture(
+              "^Final-Acceptance-URL: (?<value>https://github\\.com/lightning-it/modulix-validation/releases/download/v0\\.0\\.0-mlx90\\.[0-9a-f]{16}/mlx90-final-acceptance\\.json)$"
+            ).value' <<<"$acceptance_urls")"
+            acceptance_digest="$(jq -er '.[0] | capture(
+              "^Final-Acceptance-SHA256: (?<value>sha256:[0-9a-f]{64})$"
+            ).value' <<<"$acceptance_digests")"
+            acceptance_hex="${acceptance_digest#sha256:}"
+            test "$acceptance_url" = \
+              "https://github.com/lightning-it/modulix-validation/releases/download/v0.0.0-mlx90.${acceptance_hex:0:16}/mlx90-final-acceptance.json"
+          fi
+          {
+            echo "main_sha=$live_main"
+            echo "head_sha=$EVENT_HEAD_SHA"
+            echo "head_ref=$head_ref"
+            if [ "$CLASSIFIED_MODE" = cleanup ]; then
+              echo "acceptance_url=$acceptance_url"
+              echo "acceptance_digest=$acceptance_digest"
+            fi
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Checkout immutable policy from live main
+        if: steps.classify.outputs.mode != 'ordinary'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          ref: ${{ steps.live.outputs.main_sha }}
+          path: policy
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout the exact candidate head
+        if: steps.classify.outputs.mode != 'ordinary'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          ref: ${{ steps.live.outputs.head_sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install cosign
+        if: steps.classify.outputs.mode != 'ordinary'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+
+      - name: Revalidate evidence, producer assets, receipt, and bounded diff
+        id: update-validation
+        if: steps.classify.outputs.mode == 'update'
+        working-directory: candidate
+        env:
+          BASE_SHA: ${{ steps.live.outputs.main_sha }}
+          GH_TOKEN: ${{ steps.producer-app.outputs.token }}
+          HEAD_SHA: ${{ steps.live.outputs.head_sha }}
+          HEAD_REF: ${{ steps.live.outputs.head_ref }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          receipt_blob="$(git rev-parse \
+            "${HEAD_SHA}:.lit/security-release-receipt.json")"
+          requirements_blob="$(git rev-parse \
+            "${HEAD_SHA}:collections/requirements-base.yml")"
+          base_requirements_blob="$(git -C ../policy rev-parse \
+            "${BASE_SHA}:collections/requirements-base.yml")"
+          for blob in "$receipt_blob" "$requirements_blob" \
+            "$base_requirements_blob"; do
+            [[ "$blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+            test "$(git cat-file -t "$blob" 2>/dev/null || \
+              git -C ../policy cat-file -t "$blob")" = blob
+          done
+          receipt_json="$(git cat-file blob "$receipt_blob")"
+          evidence_url="$(jq -er '.evidenceUrl' <<<"$receipt_json")"
+          evidence_digest="$(jq -er '.evidenceDigest' <<<"$receipt_json")"
+          [[ "$evidence_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          prefix="https://github.com/lightning-it/ansible-collection-supplementary/releases/download/"
+          remainder="${evidence_url#"$prefix"}"
+          producer_tag="${remainder%%/*}"
+          test "$evidence_url" = \
+            "${prefix}${producer_tag}/security-release-evidence.json"
+          [[ "$producer_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          release="$(gh api \
+            "repos/lightning-it/ansible-collection-supplementary/releases/tags/${producer_tag}")"
+          jq -e --arg tag "$producer_tag" '
+            .tag_name == $tag and .draft == false and .prerelease == false
+            and (.id | type == "number" and . > 0)
+          ' <<<"$release" >/dev/null
+          release_id="$(jq -er .id <<<"$release")"
+          producer_sha="$(gh api \
+            "repos/lightning-it/ansible-collection-supplementary/commits/${producer_tag}" \
+            --jq .sha)"
+          [[ "$producer_sha" =~ ^[0-9a-f]{40}$ ]]
+          asset_pages="$(gh api --paginate --slurp \
+            "repos/lightning-it/ansible-collection-supplementary/releases/${release_id}/assets?per_page=100")"
+          assets="$(jq '[.[][]]' <<<"$asset_pages")"
+          evidence_dir="${RUNNER_TEMP:?}/mlx90-producer-evidence"
+          install -d -m 0700 "$evidence_dir"
+          download_asset() {
+            local name="$1" output="$2" asset_id
+            asset_id="$(jq -er --arg name "$name" '
+              [.[] | select(.name == $name and .state == "uploaded")]
+              | if length == 1 then .[0].id else error("asset is missing or ambiguous") end
+            ' <<<"$assets")"
+            gh api --header 'Accept: application/octet-stream' \
+              "repos/lightning-it/ansible-collection-supplementary/releases/assets/${asset_id}" \
+              >"$output"
+            test -s "$output"
+          }
+          jq -e --arg url "$evidence_url" '
+            [.[] | select(.name == "security-release-evidence.json")]
+            | length == 1 and .[0].browser_download_url == $url
+          ' <<<"$assets" >/dev/null
+          download_asset security-release-evidence.json \
+            "$evidence_dir/security-release-evidence.json"
+          download_asset SHA256SUMS "$evidence_dir/SHA256SUMS"
+          download_asset SHA256SUMS.sigstore.json \
+            "$evidence_dir/SHA256SUMS.sigstore.json"
+          object_format="$(git rev-parse --show-object-format)"
+          [[ "$object_format" = sha1 || "$object_format" = sha256 ]]
+          secure_blob="$(git -C ../policy rev-parse \
+            "${BASE_SHA}:scripts/mlx90_secure_files.py")"
+          consumer_blob="$(git -C ../policy rev-parse \
+            "${BASE_SHA}:scripts/security-release-consumer.py")"
+          promotion_blob="$(git -C ../policy rev-parse \
+            "${BASE_SHA}:scripts/promote-mlx90-convenience-tags.py")"
+          guard_blob="$(git -C ../policy rev-parse \
+            "${BASE_SHA}:scripts/mlx90_guard_verify.py")"
+          for blob in "$secure_blob" "$consumer_blob" "$promotion_blob" \
+            "$guard_blob"; do
+            [[ "$blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+            test "$(git -C ../policy cat-file -t "$blob")" = blob
+          done
+          exec {secure_fd}< <(git -C ../policy cat-file blob "$secure_blob")
+          exec {consumer_fd}< <(git -C ../policy cat-file blob "$consumer_blob")
+          exec {promotion_fd}< <(git -C ../policy cat-file blob "$promotion_blob")
+          exec {guard_fd}< <(git -C ../policy cat-file blob "$guard_blob")
+          exec {receipt_fd}< <(git cat-file blob "$receipt_blob")
+          exec {requirements_fd}< <(git cat-file blob "$requirements_blob")
+          exec {base_requirements_fd}< <(git -C ../policy cat-file blob \
+            "$base_requirements_blob")
+          exec {evidence_fd}<"$evidence_dir/security-release-evidence.json"
+          exec {checksums_fd}<"$evidence_dir/SHA256SUMS"
+          exec {checksums_bundle_fd}<"$evidence_dir/SHA256SUMS.sigstore.json"
+          verified_assets_result="$(python3 - \
+            "$object_format" \
+            "$secure_blob" "$secure_fd" \
+            "$consumer_blob" "$consumer_fd" \
+            "$promotion_blob" "$promotion_fd" \
+            "$guard_blob" "$guard_fd" \
+            update \
+            --object-format "$object_format" \
+            --receipt-oid "$receipt_blob" --receipt-fd "$receipt_fd" \
+            --requirements-oid "$requirements_blob" \
+            --requirements-fd "$requirements_fd" \
+            --base-requirements-oid "$base_requirements_blob" \
+            --base-requirements-fd "$base_requirements_fd" \
+            --evidence-fd "$evidence_fd" \
+            --checksums-fd "$checksums_fd" \
+            --checksums-bundle-fd "$checksums_bundle_fd" \
+            --evidence-url "$evidence_url" \
+            --producer-sha "$producer_sha" \
+            --base-sha "$BASE_SHA" <<'PY'
+          import hashlib
+          import hmac
+          import os
+          import sys
+          import types
+
+          object_format = sys.argv[1]
+          expected_length = {"sha1": 40, "sha256": 64}.get(object_format)
+          if expected_length is None:
+              raise SystemExit("unsupported Git object format")
+
+          def verified_blob(oid, fd_text, label, limit):
+              if (
+                  not fd_text.isdecimal()
+                  or int(fd_text) < 3
+                  or len(oid) != expected_length
+                  or any(character not in "0123456789abcdef" for character in oid)
+              ):
+                  raise SystemExit(f"invalid {label} Git binding")
+              chunks = []
+              total = 0
+              while True:
+                  chunk = os.read(int(fd_text), min(1024 * 1024, limit + 1 - total))
+                  if not chunk:
+                      break
+                  chunks.append(chunk)
+                  total += len(chunk)
+                  if total > limit:
+                      raise SystemExit(f"{label} exceeds its size limit")
+              payload = b"".join(chunks)
+              if not payload:
+                  raise SystemExit(f"{label} is empty")
+              try:
+                  digest = hashlib.new(object_format, usedforsecurity=False)
+              except TypeError:
+                  digest = hashlib.new(object_format)
+              digest.update(f"blob {len(payload)}\0".encode("ascii"))
+              digest.update(payload)
+              if not hmac.compare_digest(digest.hexdigest(), oid):
+                  raise SystemExit(f"{label} Git object ID mismatch")
+              return payload
+
+          bindings = (
+              ("mlx90_secure_files", sys.argv[2], sys.argv[3], 1024 * 1024),
+              ("security_release_consumer", sys.argv[4], sys.argv[5], 4 * 1024 * 1024),
+              ("mlx90_promotion_validator", sys.argv[6], sys.argv[7], 4 * 1024 * 1024),
+              ("mlx90_guard_verify", sys.argv[8], sys.argv[9], 4 * 1024 * 1024),
+          )
+          for name, oid, fd_text, limit in bindings:
+              payload = verified_blob(oid, fd_text, name, limit)
+              module = types.ModuleType(name)
+              module.__file__ = f"git:{oid}"
+              module.__package__ = ""
+              sys.modules[name] = module
+              exec(compile(payload, module.__file__, "exec"), module.__dict__)
+          sys.argv = ["mlx90_guard_verify.py", *sys.argv[10:]]
+          raise SystemExit(sys.modules["mlx90_guard_verify"].main())
+          PY
+          )"
+          jq -e '
+            keys == [
+              "baseRequirementsBlob", "collectionDigest", "evidenceId",
+              "receiptBlob", "requirementsBlob", "version"
+            ]
+            and (.collectionDigest | test("^sha256:[0-9a-f]{64}$"))
+            and (.evidenceId | test("^[A-Z0-9][A-Z0-9._-]{2,127}$"))
+            and (.version | test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+            and (.baseRequirementsBlob | test("^([0-9a-f]{40}|[0-9a-f]{64})$"))
+            and (.receiptBlob | test("^([0-9a-f]{40}|[0-9a-f]{64})$"))
+            and (.requirementsBlob | test("^([0-9a-f]{40}|[0-9a-f]{64})$"))
+          ' <<<"$verified_assets_result" >/dev/null
+          test "$(jq -er .baseRequirementsBlob <<<"$verified_assets_result")" = \
+            "$base_requirements_blob"
+          test "$(jq -er .receiptBlob <<<"$verified_assets_result")" = \
+            "$receipt_blob"
+          test "$(jq -er .requirementsBlob <<<"$verified_assets_result")" = \
+            "$requirements_blob"
+          evidence_id="$(jq -er '.evidenceId' <<<"$verified_assets_result")"
+          producer_version="$(jq -er '.version' <<<"$verified_assets_result")"
+          test "v${producer_version}" = "$producer_tag"
+          branch_id="$(tr '[:upper:]' '[:lower:]' <<<"$evidence_id" | tr -c 'a-z0-9._-' '-')"
+          branch_id="${branch_id%-}"
+          test -n "$branch_id"
+          test "$HEAD_REF" = "security/mlx90-${branch_id}"
+          expected_message="$(printf '%s\n\nSecurity-Evidence-SHA256: %s\n\nSecurity-Base-SHA: %s' \
+            "fix(security): consume ${evidence_id}" "$evidence_digest" "$BASE_SHA")"
+          test "$(git log -1 --format=%B)" = "$expected_message"
+          test "$(git rev-parse HEAD^)" = "$BASE_SHA"
+          mapfile -t changed < <(git diff --name-only "$BASE_SHA" HEAD)
+          test "${#changed[@]}" -eq 2
+          printf '%s\n' "${changed[@]}" | sort -u >/tmp/changed
+          printf '%s\n' \
+            .lit/security-release-receipt.json \
+            collections/requirements-base.yml | sort -u >/tmp/allowed
+          cmp /tmp/allowed /tmp/changed
+          git diff --check "$BASE_SHA" HEAD
+          {
+            echo "evidence_id=$evidence_id"
+            echo "producer_version=$producer_version"
+            echo "receipt_blob=$receipt_blob"
+            echo "requirements_blob=$requirements_blob"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Validate accepted receipt and exact cleanup deletion
+        id: cleanup-validation
+        if: steps.classify.outputs.mode == 'cleanup'
+        working-directory: candidate
+        env:
+          ACCEPTANCE_DIGEST: ${{ steps.live.outputs.acceptance_digest }}
+          ACCEPTANCE_URL: ${{ steps.live.outputs.acceptance_url }}
+          ACCEPTANCE_TOKEN: ${{ steps.acceptance-app.outputs.token }}
+          BASE_SHA: ${{ steps.live.outputs.main_sha }}
+          HEAD_SHA: ${{ steps.live.outputs.head_sha }}
+          HEAD_REF: ${{ steps.live.outputs.head_ref }}
+          PRODUCER_TOKEN: ${{ steps.producer-app.outputs.token }}
+          QUAY_NAMESPACE: ${{ vars.QUAY_NAMESPACE }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          if git cat-file -e \
+            "${HEAD_SHA}:.lit/security-release-receipt.json" 2>/dev/null; then
+            echo "ERROR: cleanup candidate must delete the exact receipt." >&2
+            exit 1
+          fi
+          receipt_blob="$(git -C ../policy rev-parse \
+            "${BASE_SHA}:.lit/security-release-receipt.json")"
+          [[ "$receipt_blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+          receipt_json="$(git -C ../policy cat-file blob "$receipt_blob")"
+          evidence_id="$(jq -er '.evidenceId' <<<"$receipt_json")"
+          evidence_url="$(jq -er '.evidenceUrl' <<<"$receipt_json")"
+          receipt_base_sha="$(jq -er '.baseSha' <<<"$receipt_json")"
+          [[ "$evidence_id" =~ ^[A-Z0-9][A-Z0-9._-]{2,127}$ ]]
+          [[ "$receipt_base_sha" =~ ^[0-9a-f]{40}$ ]]
+          validation_dir="$(mktemp -d \
+            "${RUNNER_TEMP:?}/mlx90-guard-cleanup-inputs.XXXXXX")"
+          chmod 0700 "$validation_dir"
+          receipt="${validation_dir}/security-release-receipt.json"
+          (umask 077 && git -C ../policy cat-file blob "$receipt_blob" \
+            >"$receipt")
+          chmod 0400 "$receipt"
+          branch_id="$(tr '[:upper:]' '[:lower:]' <<<"$evidence_id" | tr -c 'a-z0-9._-' '-')"
+          branch_id="${branch_id%-}"
+          test -n "$branch_id"
+          test "$HEAD_REF" = "security/mlx90-cleanup-${branch_id}-${BASE_SHA:0:12}"
+          export GH_TOKEN="$PRODUCER_TOKEN"
+          prefix="https://github.com/lightning-it/ansible-collection-supplementary/releases/download/"
+          remainder="${evidence_url#"$prefix"}"
+          producer_tag="${remainder%%/*}"
+          test "$evidence_url" = \
+            "${prefix}${producer_tag}/security-release-evidence.json"
+          [[ "$producer_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          producer_release="$(gh api \
+            "repos/lightning-it/ansible-collection-supplementary/releases/tags/${producer_tag}")"
+          jq -e --arg tag "$producer_tag" '
+            .tag_name == $tag and .draft == false and .prerelease == false
+            and (.id | type == "number" and . > 0)
+          ' <<<"$producer_release" >/dev/null
+          producer_release_id="$(jq -er .id <<<"$producer_release")"
+          producer_sha="$(gh api \
+            "repos/lightning-it/ansible-collection-supplementary/commits/${producer_tag}" \
+            --jq .sha)"
+          [[ "$producer_sha" =~ ^[0-9a-f]{40}$ ]]
+          producer_asset_pages="$(gh api --paginate --slurp \
+            "repos/lightning-it/ansible-collection-supplementary/releases/${producer_release_id}/assets?per_page=100")"
+          producer_assets="$(jq '[.[][]]' <<<"$producer_asset_pages")"
+          producer_dir="${RUNNER_TEMP:?}/mlx90-producer-evidence"
+          install -d -m 0700 "$producer_dir"
+          download_producer_asset() {
+            local name="$1" output="$2" asset_id
+            asset_id="$(jq -er --arg name "$name" '
+              [.[] | select(.name == $name and .state == "uploaded")]
+              | if length == 1 then .[0].id else error("asset is missing or ambiguous") end
+            ' <<<"$producer_assets")"
+            gh api --header 'Accept: application/octet-stream' \
+              "repos/lightning-it/ansible-collection-supplementary/releases/assets/${asset_id}" \
+              >"$output"
+            test -s "$output"
+          }
+          jq -e --arg url "$evidence_url" '
+            [.[] | select(.name == "security-release-evidence.json")]
+            | length == 1 and .[0].browser_download_url == $url
+          ' <<<"$producer_assets" >/dev/null
+          download_producer_asset security-release-evidence.json \
+            "$producer_dir/security-release-evidence.json"
+          download_producer_asset SHA256SUMS "$producer_dir/SHA256SUMS"
+          download_producer_asset SHA256SUMS.sigstore.json \
+            "$producer_dir/SHA256SUMS.sigstore.json"
+          base_requirements_blob="$(git -C ../policy rev-parse \
+            "${receipt_base_sha}:collections/requirements-base.yml")"
+          requirements_blob="$(git -C ../policy rev-parse \
+            "${BASE_SHA}:collections/requirements-base.yml")"
+
+          export GH_TOKEN="$ACCEPTANCE_TOKEN"
+          [[ "$ACCEPTANCE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$ACCEPTANCE_URL" =~ ^https://github\.com/lightning-it/modulix-validation/releases/download/v0\.0\.0-mlx90\.[0-9a-f]{16}/mlx90-final-acceptance\.json$ ]]
+          acceptance_hex="${ACCEPTANCE_DIGEST#sha256:}"
+          evidence_tag="v0.0.0-mlx90.${acceptance_hex:0:16}"
+          release_base="https://github.com/lightning-it/modulix-validation/releases/download/${evidence_tag}/"
+          test "$ACCEPTANCE_URL" = "${release_base}mlx90-final-acceptance.json"
+          release="$(gh api "repos/lightning-it/modulix-validation/releases/tags/${evidence_tag}")"
+          release_id="$(jq -er '.id' <<<"$release")"
+          [[ "$release_id" =~ ^[1-9][0-9]*$ ]]
+          asset_pages="$(gh api --paginate --slurp \
+            "repos/lightning-it/modulix-validation/releases/${release_id}/assets?per_page=100")"
+          assets="$(jq '[.[][]]' <<<"$asset_pages")"
+          jq -e \
+            --argjson release_id "$release_id" \
+            --arg tag "$evidence_tag" '
+              .id == $release_id
+              and .tag_name == $tag
+              and .draft == false
+              and .prerelease == false
+              and .immutable == true
+              and (.published_at | type == "string" and length > 0)
+              and (.target_commitish | test("^[0-9a-f]{40}$"))
+            ' <<<"$release" >/dev/null
+          jq -e \
+            --arg acceptance_url "$ACCEPTANCE_URL" '
+              type == "array"
+              and ([.[].name] | sort) == [
+                "SHA256SUMS",
+                "SHA256SUMS.sigstore.json",
+                "mlx90-final-acceptance.json",
+                "mlx90-verification-receipts.json",
+                "mlx90-verification-report.json",
+                "security-release-delivered.json"
+              ]
+              and all(.[]; .state == "uploaded")
+              and ([.[] | select(.name == "mlx90-final-acceptance.json") | .browser_download_url] == [$acceptance_url])
+            ' <<<"$assets" >/dev/null
+          target_sha="$(jq -r '.target_commitish' <<<"$release")"
+          tag_ref="$(gh api "repos/lightning-it/modulix-validation/git/ref/tags/${evidence_tag}")"
+          tag_type="$(jq -r '.object.type // ""' <<<"$tag_ref")"
+          tag_sha="$(jq -r '.object.sha // ""' <<<"$tag_ref")"
+          [[ "$tag_sha" =~ ^[0-9a-f]{40}$ ]]
+          if [ "$tag_type" = tag ]; then
+            tag_object="$(gh api "repos/lightning-it/modulix-validation/git/tags/${tag_sha}")"
+            test "$(jq -r '.object.type // ""' <<<"$tag_object")" = commit
+            tag_sha="$(jq -r '.object.sha // ""' <<<"$tag_object")"
+          else
+            test "$tag_type" = commit
+          fi
+          [[ "$tag_sha" =~ ^[0-9a-f]{40}$ ]]
+          test "$tag_sha" = "$target_sha"
+
+          acceptance_dir="$(mktemp -d)"
+          chmod 0700 "$acceptance_dir"
+          download_acceptance_asset() {
+            local asset_name="$1"
+            local output="$2"
+            local metadata asset_id asset_size asset_url
+            metadata="$(jq -ec --arg name "$asset_name" '[
+              .[]
+              | select(.name == $name and .state == "uploaded")
+            ] | if length == 1 then .[0] else error(
+              "release must contain exactly one matching uploaded asset"
+            ) end' <<<"$assets")"
+            asset_id="$(jq -r '.id // ""' <<<"$metadata")"
+            asset_size="$(jq -r '.size // ""' <<<"$metadata")"
+            asset_url="$(jq -r '.browser_download_url // ""' <<<"$metadata")"
+            [[ "$asset_id" =~ ^[1-9][0-9]*$ ]]
+            [[ "$asset_size" =~ ^[1-9][0-9]*$ ]]
+            test "$asset_size" -le 10485760
+            test "$asset_url" = "${release_base}${asset_name}"
+            gh api \
+              --header 'Accept: application/octet-stream' \
+              "repos/lightning-it/modulix-validation/releases/assets/${asset_id}" \
+              >"$output"
+            test -s "$output"
+          }
+          for asset_name in \
+            SHA256SUMS \
+            SHA256SUMS.sigstore.json \
+            mlx90-final-acceptance.json \
+            mlx90-verification-receipts.json \
+            mlx90-verification-report.json \
+            security-release-delivered.json
+          do
+            download_acceptance_asset "$asset_name" "$acceptance_dir/$asset_name"
+          done
+          [[ "$QUAY_NAMESPACE" =~ ^[a-z0-9][a-z0-9._-]{1,127}$ ]]
+          object_format="$(git -C ../policy rev-parse --show-object-format)"
+          [[ "$object_format" = sha1 || "$object_format" = sha256 ]]
+          secure_blob="$(git -C ../policy rev-parse \
+            "${BASE_SHA}:scripts/mlx90_secure_files.py")"
+          consumer_blob="$(git -C ../policy rev-parse \
+            "${BASE_SHA}:scripts/security-release-consumer.py")"
+          promotion_blob="$(git -C ../policy rev-parse \
+            "${BASE_SHA}:scripts/promote-mlx90-convenience-tags.py")"
+          guard_blob="$(git -C ../policy rev-parse \
+            "${BASE_SHA}:scripts/mlx90_guard_verify.py")"
+          for blob in "$secure_blob" "$consumer_blob" "$promotion_blob" \
+            "$guard_blob"; do
+            [[ "$blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+            test "$(git -C ../policy cat-file -t "$blob")" = blob
+          done
+          exec {secure_fd}< <(git -C ../policy cat-file blob "$secure_blob")
+          exec {consumer_fd}< <(git -C ../policy cat-file blob "$consumer_blob")
+          exec {promotion_fd}< <(git -C ../policy cat-file blob "$promotion_blob")
+          exec {guard_fd}< <(git -C ../policy cat-file blob "$guard_blob")
+          exec {receipt_fd}< <(git -C ../policy cat-file blob "$receipt_blob")
+          exec {requirements_fd}< <(git -C ../policy cat-file blob \
+            "$requirements_blob")
+          exec {base_requirements_fd}< <(git -C ../policy cat-file blob \
+            "$base_requirements_blob")
+          exec {evidence_fd}<"$producer_dir/security-release-evidence.json"
+          exec {producer_checksums_fd}<"$producer_dir/SHA256SUMS"
+          exec {producer_bundle_fd}<"$producer_dir/SHA256SUMS.sigstore.json"
+          exec {acceptance_checksums_fd}<"$acceptance_dir/SHA256SUMS"
+          exec {acceptance_bundle_fd}<"$acceptance_dir/SHA256SUMS.sigstore.json"
+          exec {acceptance_fd}<"$acceptance_dir/mlx90-final-acceptance.json"
+          exec {receipt_bundle_fd}<"$acceptance_dir/mlx90-verification-receipts.json"
+          exec {report_fd}<"$acceptance_dir/mlx90-verification-report.json"
+          exec {delivered_fd}<"$acceptance_dir/security-release-delivered.json"
+          cleanup_result="$(python3 - \
+            "$object_format" \
+            "$secure_blob" "$secure_fd" \
+            "$consumer_blob" "$consumer_fd" \
+            "$promotion_blob" "$promotion_fd" \
+            "$guard_blob" "$guard_fd" \
+            cleanup \
+            --object-format "$object_format" \
+            --receipt-oid "$receipt_blob" --receipt-fd "$receipt_fd" \
+            --requirements-oid "$requirements_blob" \
+            --requirements-fd "$requirements_fd" \
+            --base-requirements-oid "$base_requirements_blob" \
+            --base-requirements-fd "$base_requirements_fd" \
+            --evidence-fd "$evidence_fd" \
+            --checksums-fd "$producer_checksums_fd" \
+            --checksums-bundle-fd "$producer_bundle_fd" \
+            --evidence-url "$evidence_url" \
+            --producer-sha "$producer_sha" \
+            --receipt-base-sha "$receipt_base_sha" \
+            --acceptance-digest "$ACCEPTANCE_DIGEST" \
+            --finalizer-sha "$tag_sha" \
+            --quay-namespace "$QUAY_NAMESPACE" \
+            --SHA256SUMS-fd "$acceptance_checksums_fd" \
+            --SHA256SUMS-sigstore-fd "$acceptance_bundle_fd" \
+            --mlx90-final-acceptance-fd "$acceptance_fd" \
+            --mlx90-verification-receipts-fd "$receipt_bundle_fd" \
+            --mlx90-verification-report-fd "$report_fd" \
+            --security-release-delivered-fd "$delivered_fd" <<'PY'
+          import hashlib
+          import hmac
+          import os
+          import sys
+          import types
+
+          object_format = sys.argv[1]
+          expected_length = {"sha1": 40, "sha256": 64}.get(object_format)
+          if expected_length is None:
+              raise SystemExit("unsupported Git object format")
+
+          def verified_blob(oid, fd_text, label, limit):
+              if (
+                  not fd_text.isdecimal()
+                  or int(fd_text) < 3
+                  or len(oid) != expected_length
+                  or any(character not in "0123456789abcdef" for character in oid)
+              ):
+                  raise SystemExit(f"invalid {label} Git binding")
+              chunks = []
+              total = 0
+              while True:
+                  chunk = os.read(int(fd_text), min(1024 * 1024, limit + 1 - total))
+                  if not chunk:
+                      break
+                  chunks.append(chunk)
+                  total += len(chunk)
+                  if total > limit:
+                      raise SystemExit(f"{label} exceeds its size limit")
+              payload = b"".join(chunks)
+              if not payload:
+                  raise SystemExit(f"{label} is empty")
+              try:
+                  digest = hashlib.new(object_format, usedforsecurity=False)
+              except TypeError:
+                  digest = hashlib.new(object_format)
+              digest.update(f"blob {len(payload)}\0".encode("ascii"))
+              digest.update(payload)
+              if not hmac.compare_digest(digest.hexdigest(), oid):
+                  raise SystemExit(f"{label} Git object ID mismatch")
+              return payload
+
+          bindings = (
+              ("mlx90_secure_files", sys.argv[2], sys.argv[3], 1024 * 1024),
+              ("security_release_consumer", sys.argv[4], sys.argv[5], 4 * 1024 * 1024),
+              ("mlx90_promotion_validator", sys.argv[6], sys.argv[7], 4 * 1024 * 1024),
+              ("mlx90_guard_verify", sys.argv[8], sys.argv[9], 4 * 1024 * 1024),
+          )
+          for name, oid, fd_text, limit in bindings:
+              payload = verified_blob(oid, fd_text, name, limit)
+              module = types.ModuleType(name)
+              module.__file__ = f"git:{oid}"
+              module.__package__ = ""
+              sys.modules[name] = module
+              exec(compile(payload, module.__file__, "exec"), module.__dict__)
+          sys.argv = ["mlx90_guard_verify.py", *sys.argv[10:]]
+          raise SystemExit(sys.modules["mlx90_guard_verify"].main())
+          PY
+          )"
+          jq -e '
+            keys == [
+              "acceptanceDigest", "baseRequirementsBlob", "consumerHeadSha",
+              "consumerMergeSha", "consumerPullRequest", "containerReleaseId",
+              "containerReleaseTag", "evidenceId", "finalizerRunAttempt",
+              "finalizerRunId", "finalizerRunUrl", "finalizerSha",
+              "producerVersion", "receiptBlob", "receiptDigest",
+              "requirementsBlob"
+            ]
+            and (.acceptanceDigest | test("^sha256:[0-9a-f]{64}$"))
+            and (.consumerHeadSha | test("^[0-9a-f]{40}$"))
+            and (.consumerMergeSha | test("^[0-9a-f]{40}$"))
+            and (.consumerPullRequest | type == "number" and . > 0)
+            and (.containerReleaseId | type == "number" and . > 0)
+            and (.containerReleaseTag | test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+            and (.evidenceId | test("^[A-Z0-9][A-Z0-9._-]{2,127}$"))
+            and (.finalizerRunAttempt | type == "number" and . > 0)
+            and (.finalizerRunId | type == "number" and . > 0)
+            and (.finalizerRunUrl | test("^https://github\\.com/lightning-it/modulix-validation/actions/runs/[1-9][0-9]*$"))
+            and (.finalizerSha | test("^[0-9a-f]{40}$"))
+            and (.producerVersion | test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+            and (.receiptDigest | test("^sha256:[0-9a-f]{64}$"))
+            and (.baseRequirementsBlob | test("^([0-9a-f]{40}|[0-9a-f]{64})$"))
+            and (.receiptBlob | test("^([0-9a-f]{40}|[0-9a-f]{64})$"))
+            and (.requirementsBlob | test("^([0-9a-f]{40}|[0-9a-f]{64})$"))
+          ' <<<"$cleanup_result" >/dev/null
+          test "$(jq -er .acceptanceDigest <<<"$cleanup_result")" = \
+            "$ACCEPTANCE_DIGEST"
+          test "$(jq -er .baseRequirementsBlob <<<"$cleanup_result")" = \
+            "$base_requirements_blob"
+          test "$(jq -er .receiptBlob <<<"$cleanup_result")" = \
+            "$receipt_blob"
+          test "$(jq -er .requirementsBlob <<<"$cleanup_result")" = \
+            "$requirements_blob"
+          test "$(jq -er .evidenceId <<<"$cleanup_result")" = "$evidence_id"
+          test "$(jq -er .producerVersion <<<"$cleanup_result")" = \
+            "${producer_tag#v}"
+          test "sha256:$(sha256sum "$acceptance_dir/mlx90-final-acceptance.json" | awk '{print $1}')" = \
+            "$ACCEPTANCE_DIGEST"
+          declare -A checksummed=()
+          mapfile -t checksum_lines <"$acceptance_dir/SHA256SUMS"
+          test "${#checksum_lines[@]}" -eq 4
+          for checksum_line in "${checksum_lines[@]}"; do
+            if [[ "$checksum_line" =~ ^([0-9a-f]{64})\ \ (mlx90-final-acceptance\.json|mlx90-verification-receipts\.json|mlx90-verification-report\.json|security-release-delivered\.json)$ ]]; then
+              checksummed["${BASH_REMATCH[2]}"]="${BASH_REMATCH[1]}"
+            else
+              echo "ERROR: non-canonical final-acceptance checksum entry." >&2
+              exit 1
+            fi
+          done
+          test "${#checksummed[@]}" -eq 4
+          for asset_name in \
+            mlx90-final-acceptance.json \
+            mlx90-verification-receipts.json \
+            mlx90-verification-report.json \
+            security-release-delivered.json
+          do
+            test -n "${checksummed[$asset_name]+x}"
+          done
+          (
+            cd "$acceptance_dir"
+            sha256sum --check --strict SHA256SUMS
+          )
+          cosign verify-blob \
+            --bundle "$acceptance_dir/SHA256SUMS.sigstore.json" \
+            --certificate-identity "https://github.com/lightning-it/modulix-validation/.github/workflows/mlx90-final-acceptance.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-github-workflow-sha "$tag_sha" \
+            "$acceptance_dir/SHA256SUMS"
+
+          acceptance="$acceptance_dir/mlx90-final-acceptance.json"
+          delivered="$acceptance_dir/security-release-delivered.json"
+          receipt_evidence_digest="$(jq -r '.evidenceDigest' "$receipt")"
+          receipt_producer_repository="$(jq -r '.producerRepository' "$receipt")"
+          receipt_producer_sha="$(jq -r '.producerSourceSha' "$receipt")"
+          receipt_collection="$(jq -r '.collection' "$receipt")"
+          receipt_version="$(jq -r '.version' "$receipt")"
+          receipt_collection_digest="$(jq -r '.collectionDigest' "$receipt")"
+          receipt_bundle="$acceptance_dir/mlx90-verification-receipts.json"
+          receipt_bundle_digest="sha256:$(sha256sum "$receipt_bundle" | awk '{print $1}')"
+          receipt_bundle_size="$(wc -c <"$receipt_bundle" | tr -d '[:space:]')"
+          [[ "$receipt_bundle_size" =~ ^[1-9][0-9]*$ ]]
+          jq -e \
+            --arg collection "$receipt_collection" \
+            --arg collection_digest "$receipt_collection_digest" \
+            --arg consumer "$REPOSITORY" \
+            --arg evidence_digest "$receipt_evidence_digest" \
+            --arg evidence_id "$evidence_id" \
+            --arg evidence_url "$evidence_url" \
+            --arg producer "$receipt_producer_repository" \
+            --arg producer_sha "$receipt_producer_sha" \
+            --arg receipt_bundle_digest "$receipt_bundle_digest" \
+            --argjson receipt_bundle_size "$receipt_bundle_size" \
+            --arg receipt_base "$receipt_base_sha" \
+            --arg tag_sha "$tag_sha" \
+            --arg version "$receipt_version" '
+              .apiVersion == "lit.security-release.acceptance/v1"
+              and .kind == "SecurityReleaseAcceptance"
+              and .status == "delivered"
+              and .securityEvidenceId == $evidence_id
+              and .producer.repository == $producer
+              and .producer.sourceSha == $producer_sha
+              and .producer.collection == $collection
+              and .producer.version == $version
+              and .producer.collectionDigest == $collection_digest
+              and .producer.evidence.url == $evidence_url
+              and .producer.evidence.digest == $evidence_digest
+              and .consumer.repository == $consumer
+              and .consumer.baseSha == $receipt_base
+              and (.consumer.pullRequest | type == "number" and . > 0)
+              and (.consumer.headSha | test("^[0-9a-f]{40}$"))
+              and (.consumer.mergeSha | test("^[0-9a-f]{40}$"))
+              and .container.repository == $consumer
+              and .container.sourceSha == .consumer.mergeSha
+              and .acceptance.expectedCollection == $collection
+              and .acceptance.expectedVersion == $version
+              and (.receiptBundle | keys | sort) == ["assetName", "digest", "size"]
+              and .receiptBundle.assetName == "mlx90-verification-receipts.json"
+              and .receiptBundle.digest == $receipt_bundle_digest
+              and .receiptBundle.size == $receipt_bundle_size
+              and (.checks | type == "object" and length > 0 and all(.[]; . == true))
+              and .finalizer.repository == "lightning-it/modulix-validation"
+              and .finalizer.workflow == ".github/workflows/mlx90-final-acceptance.yml"
+              and .finalizer.workflowSha == $tag_sha
+              and (.finalizer.runId | type == "number" and . > 0)
+              and (.finalizer.runAttempt | type == "number" and . > 0)
+              and .finalizer.runUrl == (
+                "https://github.com/lightning-it/modulix-validation/actions/runs/"
+                + (.finalizer.runId | tostring)
+              )
+            ' "$acceptance" >/dev/null
+          consumer_head="$(jq -er '.consumerHeadSha' <<<"$cleanup_result")"
+          consumer_merge="$(jq -er '.consumerMergeSha' <<<"$cleanup_result")"
+          run_id="$(jq -er '.finalizerRunId' <<<"$cleanup_result")"
+          run_attempt="$(jq -er '.finalizerRunAttempt' <<<"$cleanup_result")"
+          run_url="$(jq -er '.finalizerRunUrl' <<<"$cleanup_result")"
+          run="$(gh api "repos/lightning-it/modulix-validation/actions/runs/${run_id}")"
+          jq -e \
+            --arg app "lightning-it-release-automation[bot]" \
+            --arg run_attempt "$run_attempt" \
+            --arg run_url "$run_url" \
+            --arg sha "$tag_sha" '
+              .status == "completed"
+              and .conclusion == "success"
+              and .event == "workflow_dispatch"
+              and .head_branch == "main"
+              and .head_sha == $sha
+              and .path == ".github/workflows/mlx90-final-acceptance.yml"
+              and .actor.login == $app
+              and .repository.full_name == "lightning-it/modulix-validation"
+              and (.run_attempt | tostring) == $run_attempt
+              and .html_url == $run_url
+            ' <<<"$run" >/dev/null
+          jq -S 'del(.status, .delivery)' "$delivered" \
+            >"$acceptance_dir/delivered-core.json"
+          jq -S 'del(.status, .delivery)' \
+            "$producer_dir/security-release-evidence.json" \
+            >"$acceptance_dir/producer-core.json"
+          cmp "$acceptance_dir/producer-core.json" \
+            "$acceptance_dir/delivered-core.json"
+          jq -e \
+            --arg consumer "$REPOSITORY" \
+            --arg evidence_id "$evidence_id" \
+            --arg head "$consumer_head" \
+            --arg merge "$consumer_merge" \
+            --arg run_url "$run_url" '
+              .status == "delivered"
+              and .metadata.id == $evidence_id
+              and .delivery.consumerRepository == $consumer
+              and .delivery.consumerHeadSha == $head
+              and .delivery.consumerMergeSha == $merge
+              and .delivery.acceptanceRunUrl == $run_url
+            ' "$delivered" >/dev/null
+          git -C ../policy merge-base --is-ancestor "$consumer_merge" "$BASE_SHA"
+          read -r -a merge_parents <<<"$(git -C ../policy show -s --format='%P' "$consumer_merge")"
+          test "${#merge_parents[@]}" -eq 2
+          test "${merge_parents[0]}" = "$receipt_base_sha"
+          test "${merge_parents[1]}" = "$consumer_head"
+          git -C ../policy show "${consumer_head}:.lit/security-release-receipt.json" \
+            >"$acceptance_dir/head-receipt.json"
+          git -C ../policy show "${consumer_merge}:.lit/security-release-receipt.json" \
+            >"$acceptance_dir/merge-receipt.json"
+          cmp "$receipt" "$acceptance_dir/head-receipt.json"
+          cmp "$receipt" "$acceptance_dir/merge-receipt.json"
+          test "$(git rev-parse HEAD^)" = "$BASE_SHA"
+          mapfile -t changed < <(git diff --name-status "$BASE_SHA" HEAD)
+          test "${#changed[@]}" -eq 1
+          test "${changed[0]}" = $'D\t.lit/security-release-receipt.json'
+          git diff --check "$BASE_SHA" HEAD
+          {
+            echo "acceptance_digest=$(jq -er .acceptanceDigest <<<"$cleanup_result")"
+            echo "consumer_head_sha=$consumer_head"
+            echo "consumer_merge_sha=$consumer_merge"
+            echo "evidence_id=$(jq -er .evidenceId <<<"$cleanup_result")"
+            echo "finalizer_run_attempt=$run_attempt"
+            echo "finalizer_run_id=$run_id"
+            echo "finalizer_run_url=$run_url"
+            echo "finalizer_sha=$(jq -er .finalizerSha <<<"$cleanup_result")"
+            echo "producer_version=$(jq -er .producerVersion <<<"$cleanup_result")"
+            echo "receipt_blob=$receipt_blob"
+            echo "requirements_blob=$requirements_blob"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Recheck live policy and request native auto-merge
+        if: steps.classify.outputs.mode != 'ordinary'
+        id: lease
+        env:
+          APP_LOGIN: ${{ steps.release-bot.outputs.login }}
+          CLASSIFIED_MODE: ${{ steps.classify.outputs.mode }}
+          EXPECTED_HEAD: ${{ steps.live.outputs.head_sha }}
+          EXPECTED_MAIN: ${{ steps.live.outputs.main_sha }}
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PRODUCER_TOKEN: ${{ steps.producer-app.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          CLEANUP_ACCEPTANCE_DIGEST: ${{ steps.cleanup-validation.outputs.acceptance_digest }}
+          CLEANUP_CONSUMER_HEAD_SHA: ${{ steps.cleanup-validation.outputs.consumer_head_sha }}
+          CLEANUP_CONSUMER_MERGE_SHA: ${{ steps.cleanup-validation.outputs.consumer_merge_sha }}
+          CLEANUP_EVIDENCE_ID: ${{ steps.cleanup-validation.outputs.evidence_id }}
+          CLEANUP_FINALIZER_RUN_ATTEMPT: ${{ steps.cleanup-validation.outputs.finalizer_run_attempt }}
+          CLEANUP_FINALIZER_RUN_ID: ${{ steps.cleanup-validation.outputs.finalizer_run_id }}
+          CLEANUP_FINALIZER_RUN_URL: ${{ steps.cleanup-validation.outputs.finalizer_run_url }}
+          CLEANUP_FINALIZER_SHA: ${{ steps.cleanup-validation.outputs.finalizer_sha }}
+          CLEANUP_PRODUCER_VERSION: ${{ steps.cleanup-validation.outputs.producer_version }}
+          CLEANUP_RECEIPT_BLOB: ${{ steps.cleanup-validation.outputs.receipt_blob }}
+          CLEANUP_REQUIREMENTS_BLOB: ${{ steps.cleanup-validation.outputs.requirements_blob }}
+          VALIDATED_EVIDENCE_ID: ${{ steps.update-validation.outputs.evidence_id }}
+          VALIDATED_PRODUCER_VERSION: ${{ steps.update-validation.outputs.producer_version }}
+          VALIDATED_RECEIPT_BLOB: ${{ steps.update-validation.outputs.receipt_blob }}
+          VALIDATED_REQUIREMENTS_BLOB: ${{ steps.update-validation.outputs.requirements_blob }}
+        run: |
+          set -euo pipefail
+          live_main="$(gh api "repos/${REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          test "$live_main" = "$EXPECTED_MAIN"
+          live_pr="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          jq -e \
+            --arg app "$APP_LOGIN" \
+            --arg head "$EXPECTED_HEAD" \
+            --arg main "$EXPECTED_MAIN" \
+            --arg repo "$REPOSITORY" '
+              .state == "open"
+              and .draft == false
+              and .user.login == $app
+              and .base.ref == "main"
+              and .base.sha == $main
+              and .head.sha == $head
+              and .head.repo.full_name == $repo
+              and .commits == 1
+            ' <<<"$live_pr" >/dev/null
+          if [ "$CLASSIFIED_MODE" = update ]; then
+            evidence_id="$VALIDATED_EVIDENCE_ID"
+            producer_version="$VALIDATED_PRODUCER_VERSION"
+            [[ "$evidence_id" =~ ^[A-Z0-9][A-Z0-9._-]{2,127}$ ]]
+            [[ "$producer_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+            test "$(git -C candidate rev-parse \
+              "${EXPECTED_HEAD}:.lit/security-release-receipt.json")" = \
+              "$VALIDATED_RECEIPT_BLOB"
+            test "$(git -C candidate rev-parse \
+              "${EXPECTED_HEAD}:collections/requirements-base.yml")" = \
+              "$VALIDATED_REQUIREMENTS_BLOB"
+            receipt_metadata="$(gh api \
+              "repos/${REPOSITORY}/contents/.lit/security-release-receipt.json?ref=${EXPECTED_HEAD}")"
+            requirements_metadata="$(gh api \
+              "repos/${REPOSITORY}/contents/collections/requirements-base.yml?ref=${EXPECTED_HEAD}")"
+            test "$(jq -er .sha <<<"$receipt_metadata")" = \
+              "$VALIDATED_RECEIPT_BLOB"
+            test "$(jq -er .sha <<<"$requirements_metadata")" = \
+              "$VALIDATED_REQUIREMENTS_BLOB"
+          elif [ "$CLASSIFIED_MODE" = cleanup ]; then
+            evidence_id="$CLEANUP_EVIDENCE_ID"
+            producer_version="$CLEANUP_PRODUCER_VERSION"
+            [[ "$evidence_id" =~ ^[A-Z0-9][A-Z0-9._-]{2,127}$ ]]
+            [[ "$producer_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            [[ "$CLEANUP_ACCEPTANCE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+            [[ "$CLEANUP_CONSUMER_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$CLEANUP_CONSUMER_MERGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$CLEANUP_FINALIZER_SHA" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$CLEANUP_FINALIZER_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+            [[ "$CLEANUP_FINALIZER_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+            test "$CLEANUP_FINALIZER_RUN_URL" = \
+              "https://github.com/lightning-it/modulix-validation/actions/runs/${CLEANUP_FINALIZER_RUN_ID}"
+            test "$(git -C policy rev-parse \
+              "${EXPECTED_MAIN}:.lit/security-release-receipt.json")" = \
+              "$CLEANUP_RECEIPT_BLOB"
+            test "$(git -C policy rev-parse \
+              "${EXPECTED_MAIN}:collections/requirements-base.yml")" = \
+              "$CLEANUP_REQUIREMENTS_BLOB"
+            receipt_metadata="$(gh api \
+              "repos/${REPOSITORY}/contents/.lit/security-release-receipt.json?ref=${EXPECTED_MAIN}")"
+            requirements_metadata="$(gh api \
+              "repos/${REPOSITORY}/contents/collections/requirements-base.yml?ref=${EXPECTED_MAIN}")"
+            test "$(jq -er .sha <<<"$receipt_metadata")" = \
+              "$CLEANUP_RECEIPT_BLOB"
+            test "$(jq -er .sha <<<"$requirements_metadata")" = \
+              "$CLEANUP_REQUIREMENTS_BLOB"
+            local_tree="$(git -C candidate rev-parse "${EXPECTED_HEAD}^{tree}")"
+            remote_commit="$(gh api \
+              "repos/${REPOSITORY}/git/commits/${EXPECTED_HEAD}")"
+            jq -e --arg head "$EXPECTED_HEAD" --arg tree "$local_tree" '
+              .sha == $head and .tree.sha == $tree
+            ' <<<"$remote_commit" >/dev/null
+            if git -C candidate cat-file -e \
+              "${EXPECTED_HEAD}:.lit/security-release-receipt.json" 2>/dev/null; then
+              echo "ERROR: cleanup head still contains the receipt blob." >&2
+              exit 1
+            fi
+          else
+            echo "ERROR: unsupported protected MLX-90 mode." >&2
+            exit 1
+          fi
+          producer_tag="v${producer_version}"
+          producer_release="$(GH_TOKEN="$PRODUCER_TOKEN" gh api \
+            "repos/lightning-it/ansible-collection-supplementary/releases/tags/${producer_tag}")"
+          jq -e --arg tag "$producer_tag" '
+            .tag_name == $tag
+            and .draft == false
+            and .prerelease == false
+            and (.id | type == "number" and . > 0)
+          ' <<<"$producer_release" >/dev/null
+          producer_release_id="$(jq -er '.id' <<<"$producer_release")"
+          asset_pages="$(GH_TOKEN="$PRODUCER_TOKEN" gh api --paginate --slurp \
+            "repos/lightning-it/ansible-collection-supplementary/releases/${producer_release_id}/assets?per_page=100")"
+          assets="$(jq '[.[][]]' <<<"$asset_pages")"
+          jq -e --arg id "$evidence_id" '
+            type == "array"
+            and ([.[].name | select(
+              . == "security-release-revocation.json"
+              or . == ("security-release-revocation-" + $id + ".json")
+            )] | length) == 0
+          ' <<<"$assets" >/dev/null
+          {
+            echo "evidence_id=$evidence_id"
+            echo "producer_version=$producer_version"
+          } >>"$GITHUB_OUTPUT"
+
+          live_main="$(gh api "repos/${REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          test "$live_main" = "$EXPECTED_MAIN"
+          live_pr="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          jq -e \
+            --arg app "$APP_LOGIN" \
+            --arg head "$EXPECTED_HEAD" \
+            --arg main "$EXPECTED_MAIN" \
+            --arg repo "$REPOSITORY" '
+              .state == "open"
+              and .draft == false
+              and .user.login == $app
+              and .base.ref == "main"
+              and .base.sha == $main
+              and .head.sha == $head
+              and .head.repo.full_name == $repo
+              and .commits == 1
+              and (.node_id | type == "string" and length > 0)
+            ' <<<"$live_pr" >/dev/null
+          pull_request_id="$(jq -er '.node_id' <<<"$live_pr")"
+          [[ "$pull_request_id" =~ ^[A-Za-z0-9_=-]+$ ]]
+          # shellcheck disable=SC2016
+          auto_merge="$(gh api graphql \
+            -f query='mutation($pr:ID!){enablePullRequestAutoMerge(input:{pullRequestId:$pr,mergeMethod:MERGE}){pullRequest{headRefOid autoMergeRequest{enabledAt mergeMethod}}}}' \
+            -f pr="$pull_request_id")"
+          jq -e --arg head "$EXPECTED_HEAD" '
+            .data.enablePullRequestAutoMerge.pullRequest
+            | .headRefOid == $head
+            and .autoMergeRequest.mergeMethod == "MERGE"
+            and (.autoMergeRequest.enabledAt | type == "string" and length > 0)
+          ' <<<"$auto_merge" >/dev/null
