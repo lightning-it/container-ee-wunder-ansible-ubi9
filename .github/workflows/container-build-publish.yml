@@ -3,27 +3,212 @@
 name: Container Build & Publish
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_body_sha256:
+        description: SHA-256 of the exact semantic-release body
+        required: true
+        type: string
+      release_id:
+        description: Exact semantic-release draft database ID
+        required: true
+        type: string
+      release_tag:
+        description: Exact stable semantic-release tag
+        required: true
+        type: string
+      source_sha:
+        description: Exact immutable release source SHA
+        required: true
+        type: string
+      semantic_release_run_id:
+        description: Exact semantic-release orchestrator run ID
+        required: true
+        type: string
+      semantic_release_run_attempt:
+        description: Exact semantic-release orchestrator run attempt
+        required: true
+        type: string
 
 permissions:
   contents: read
 
+concurrency:
+  group: mlx90-container-release-${{ github.repository }}
+  queue: max
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build & push image to Quay.io
+    if: >-
+      github.actor == 'lightning-it-release-automation[bot]'
+      && github.repository == 'lightning-it/container-ee-wunder-ansible-ubi9'
+      && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    environment: container-release-publish
+    outputs:
+      release_sha: ${{ steps.release-context.outputs.full_sha }}
+      release_body_sha256: ${{ steps.release-trigger.outputs.release_body_sha256 }}
+      release_id: ${{ steps.release-trigger.outputs.release_id }}
+      release_tag: ${{ steps.release-trigger.outputs.release_tag }}
+      security_release: ${{ steps.release-context.outputs.security_release }}
+      public_digest: ${{ steps.release-digests.outputs.public_digest }}
+      certified_digest: ${{ steps.release-digests.outputs.certified_digest }}
+      bootstrap_digest: ${{ steps.release-digests.outputs.bootstrap_digest }}
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     env:
       REGISTRY: quay.io
 
     steps:
+      - name: Mint read-only release identity App token
+        id: release-read-app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: container-ee-wunder-ansible-ubi9
+          permission-actions: read
+          permission-contents: read
+
+      - name: Validate exact tag-bound draft dispatch
+        id: release-trigger
+        env:
+          APP_INSTALLATION_ID: ${{ steps.release-read-app.outputs.installation-id }}
+          APP_SLUG: ${{ steps.release-read-app.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.release-read-app.outputs.token }}
+          RELEASE_BODY_SHA256: ${{ inputs.release_body_sha256 }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+          SEMANTIC_RELEASE_RUN_ATTEMPT: ${{ inputs.semantic_release_run_attempt }}
+          SEMANTIC_RELEASE_RUN_ID: ${{ inputs.semantic_release_run_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$APP_SLUG" = "lightning-it-release-automation"
+          test "$APP_INSTALLATION_ID" = "148019054"
+          actual_repositories="$(
+            gh api --paginate "installation/repositories?per_page=100" \
+              | jq -sc '[.[].repositories[].full_name] | sort | unique'
+          )"
+          test "$actual_repositories" = \
+            '["lightning-it/container-ee-wunder-ansible-ubi9"]'
+          [[ "$RELEASE_BODY_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$RELEASE_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$RELEASE_TAG_INPUT" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SEMANTIC_RELEASE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SEMANTIC_RELEASE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          test "$GITHUB_REF" = "refs/tags/${RELEASE_TAG_INPUT}"
+          test "$GITHUB_SHA" = "$SOURCE_SHA"
+          orchestrator="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${SEMANTIC_RELEASE_RUN_ID}/attempts/${SEMANTIC_RELEASE_RUN_ATTEMPT}")"
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --argjson run_attempt "$SEMANTIC_RELEASE_RUN_ATTEMPT" \
+            --argjson run_id "$SEMANTIC_RELEASE_RUN_ID" '
+              .id == $run_id
+              and .run_attempt == $run_attempt
+              and .event == "push"
+              and .head_branch == "main"
+              and (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
+              and .head_repository.full_name == $repository
+              and .path == ".github/workflows/semantic-release.yml"
+              and (
+                .status == "queued"
+                or .status == "in_progress"
+                or (.status == "completed" and .conclusion == "success")
+              )
+            ' <<<"$orchestrator" >/dev/null
+          orchestrator_sha="$(jq -er .head_sha <<<"$orchestrator")"
+          orchestrator_comparison="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/compare/${SOURCE_SHA}...${orchestrator_sha}")"
+          jq -e --arg source_sha "$SOURCE_SHA" '
+            (.status == "ahead" or .status == "identical")
+            and .behind_by == 0
+            and .merge_base_commit.sha == $source_sha
+          ' <<<"$orchestrator_comparison" >/dev/null
+          release="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")"
+          jq -e \
+            --arg sha "$SOURCE_SHA" \
+            --arg tag "$RELEASE_TAG_INPUT" \
+            --argjson release_id "$RELEASE_ID" '
+              .id == $release_id
+              and .tag_name == $tag
+              and .target_commitish == $sha
+              and .name == $tag
+              and .draft == true
+              and .prerelease == false
+              and .immutable == false
+              and .published_at == null
+              and .author.login == "lightning-it-release-automation[bot]"
+            ' <<<"$release" >/dev/null
+          actual_body_sha256="$(
+            jq -jr '.body | select(type == "string")' <<<"$release" \
+              | sha256sum | awk '{print $1}'
+          )"
+          test "$actual_body_sha256" = "$RELEASE_BODY_SHA256"
+          release_pages="$(gh api --paginate --slurp \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100")"
+          releases="$(jq -ce '[.[][]]' <<<"$release_pages")"
+          list_count="$(jq \
+            --arg tag "$RELEASE_TAG_INPUT" \
+            --argjson release_id "$RELEASE_ID" '
+              [.[] | select(.id == $release_id and .tag_name == $tag)] | length
+            ' <<<"$releases")"
+          test "$list_count" -eq 1
+          listed_release="$(jq -ce \
+            --argjson release_id "$RELEASE_ID" '
+              [.[] | select(.id == $release_id)][0]
+            ' <<<"$releases")"
+          jq -e \
+            --arg sha "$SOURCE_SHA" \
+            --arg tag "$RELEASE_TAG_INPUT" \
+            --argjson release_id "$RELEASE_ID" '
+              .id == $release_id
+              and .tag_name == $tag
+              and .target_commitish == $sha
+              and .name == $tag
+              and .draft == true
+              and .prerelease == false
+              and .immutable == false
+              and .published_at == null
+              and .author.login == "lightning-it-release-automation[bot]"
+            ' <<<"$listed_release" >/dev/null
+          listed_body_sha256="$(
+            jq -jr '.body | select(type == "string")' <<<"$listed_release" \
+              | sha256sum | awk '{print $1}'
+          )"
+          test "$listed_body_sha256" = "$RELEASE_BODY_SHA256"
+          other_pending="$(jq \
+            --argjson release_id "$RELEASE_ID" '[
+              .[]
+              | select(.id != $release_id)
+              | select(.draft == true and .prerelease == false)
+              | select(.tag_name | test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+            ] | length
+          ' <<<"$releases")"
+          test "$other_pending" -eq 0
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG_INPUT}" \
+            --jq .sha)" = "$SOURCE_SHA"
+          {
+            echo "release_body_sha256=$RELEASE_BODY_SHA256"
+            echo "release_id=$RELEASE_ID"
+            echo "release_tag=$RELEASE_TAG_INPUT"
+          } >>"$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Validate Quay variables/secrets
@@ -65,9 +250,11 @@ jobs:
           echo "Quay configuration present (namespace + credentials + RH token)."
 
       - name: Compute image names and tags
+        id: release-context
         shell: bash
         env:
           QUAY_NAMESPACE: ${{ vars.QUAY_NAMESPACE }}
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           repo="${GITHUB_REPOSITORY#*/}"
@@ -76,11 +263,40 @@ jobs:
           image_name_public="${REGISTRY}/${QUAY_NAMESPACE}/${image_repo}"
           image_name_certified="${REGISTRY}/${QUAY_NAMESPACE}/${image_repo}-certified"
           image_name_bootstrap="${REGISTRY}/${QUAY_NAMESPACE}/${image_repo}-bootstrap"
-          release_tag="${{ github.event.release.tag_name }}"
+          release_tag="$RELEASE_TAG_INPUT"
+          [[ "$release_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           version="${release_tag#v}"
           full_sha="$(git rev-parse HEAD)"
           short_sha="$(git rev-parse --short=12 HEAD)"
-          created="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          created="$(git show -s --format=%cI "$full_sha")"
+          collection_version="$(
+            python3 scripts/security-release-consumer.py requirement-version \
+              --requirements collections/requirements-base.yml
+          )"
+
+          security_release=false
+          public_tags="${image_name_public}:${release_tag}"$'\n'
+          public_tags+="${image_name_public}:${version}"$'\n'
+          public_tags+="${image_name_public}:sha-${short_sha}"
+          certified_tags="${image_name_certified}:${release_tag}"$'\n'
+          certified_tags+="${image_name_certified}:${version}"$'\n'
+          certified_tags+="${image_name_certified}:sha-${short_sha}"
+          bootstrap_tags="${image_name_bootstrap}:${release_tag}"$'\n'
+          bootstrap_tags+="${image_name_bootstrap}:${version}"$'\n'
+          bootstrap_tags+="${image_name_bootstrap}:sha-${short_sha}"
+          receipt_spec="${full_sha}:.lit/security-release-receipt.json"
+          if git cat-file -e "$receipt_spec" 2>/dev/null; then
+            security_release=true
+            receipt_blob="$(git rev-parse "$receipt_spec")"
+            [[ "$receipt_blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+            test "$(git cat-file -t "$receipt_blob")" = blob
+            [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+            [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+            candidate_suffix="${full_sha}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            public_tags="${image_name_public}:mlx90-candidate-${candidate_suffix}"
+            certified_tags="${image_name_certified}:mlx90-candidate-${candidate_suffix}"
+            bootstrap_tags="${image_name_bootstrap}:mlx90-candidate-${candidate_suffix}"
+          fi
 
           {
             echo "IMAGE_NAME_PUBLIC=${image_name_public}"
@@ -91,7 +307,23 @@ jobs:
             echo "FULL_SHA=${full_sha}"
             echo "SHORT_SHA=${short_sha}"
             echo "CREATED=${created}"
+            echo "EXPECTED_COLLECTION_VERSION=${collection_version}"
+            echo "SECURITY_RELEASE=${security_release}"
+            echo "PUBLIC_PUBLISH_TAGS<<MLX90_TAGS"
+            echo "$public_tags"
+            echo "MLX90_TAGS"
+            echo "CERTIFIED_PUBLISH_TAGS<<MLX90_TAGS"
+            echo "$certified_tags"
+            echo "MLX90_TAGS"
+            echo "BOOTSTRAP_PUBLISH_TAGS<<MLX90_TAGS"
+            echo "$bootstrap_tags"
+            echo "MLX90_TAGS"
           } >> "$GITHUB_ENV"
+
+          {
+            echo "full_sha=${full_sha}"
+            echo "security_release=${security_release}"
+          } >>"$GITHUB_OUTPUT"
 
           echo "Using IMAGE_NAME_PUBLIC=${image_name_public}"
           echo "Using IMAGE_NAME_CERTIFIED=${image_name_certified}"
@@ -99,6 +331,104 @@ jobs:
           echo "Using RELEASE_TAG=${release_tag}"
           echo "Using VERSION=${version}"
           echo "Using SHORT_SHA=${short_sha}"
+
+      - name: Validate exact draft and live source boundary
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.release-read-app.outputs.token }}
+          RELEASE_BODY_SHA256: ${{ inputs.release_body_sha256 }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          release="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")"
+          jq -e \
+            --arg tag "$RELEASE_TAG" \
+            --arg sha "$SOURCE_SHA" \
+            --argjson release_id "$RELEASE_ID" '
+              .id == $release_id
+              and .tag_name == $tag
+              and .target_commitish == $sha
+              and .name == $tag
+              and .draft == true
+              and .prerelease == false
+              and .immutable == false
+              and .published_at == null
+              and .author.login == "lightning-it-release-automation[bot]"
+            ' <<<"$release" >/dev/null
+          actual_body_sha256="$(
+            jq -jr '.body | select(type == "string")' <<<"$release" \
+              | sha256sum | awk '{print $1}'
+          )"
+          test "$actual_body_sha256" = "$RELEASE_BODY_SHA256"
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG}" \
+            --jq '.sha')" = "$FULL_SHA"
+          live_main="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)"
+          [[ "$live_main" =~ ^[0-9a-f]{40}$ ]]
+          comparison="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/compare/${FULL_SHA}...${live_main}")"
+          jq -e --arg release_sha "$FULL_SHA" '
+            (.status == "ahead" or .status == "identical")
+            and .behind_by == 0
+            and .merge_base_commit.sha == $release_sha
+          ' <<<"$comparison" >/dev/null
+          if [ "$SECURITY_RELEASE" = true ]; then
+            release_receipt_blob="$(git rev-parse \
+              "${FULL_SHA}:.lit/security-release-receipt.json")"
+            live_receipt_blob="$(git rev-parse \
+              "${live_main}:.lit/security-release-receipt.json")"
+            for receipt_blob in "$release_receipt_blob" "$live_receipt_blob"; do
+              [[ "$receipt_blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+              test "$(git cat-file -t "$receipt_blob")" = blob
+            done
+            release_receipt="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/contents/.lit/security-release-receipt.json?ref=${FULL_SHA}")"
+            live_receipt="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/contents/.lit/security-release-receipt.json?ref=${live_main}")"
+            for receipt_metadata in "$release_receipt" "$live_receipt"; do
+              jq -e '
+                .type == "file"
+                and .encoding == "base64"
+                and (.size | type == "number" and . > 0 and . <= 65536)
+                and (.sha | test("^([0-9a-f]{40}|[0-9a-f]{64})$"))
+              ' <<<"$receipt_metadata" >/dev/null
+            done
+            test "$(jq -er .sha <<<"$release_receipt")" = \
+              "$release_receipt_blob"
+            test "$(jq -er .sha <<<"$live_receipt")" = "$live_receipt_blob"
+            test "$live_receipt_blob" = "$release_receipt_blob"
+          fi
+
+      - name: Mint read-only producer evidence token
+        if: env.SECURITY_RELEASE == 'true'
+        id: producer-app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ansible-collection-supplementary
+          permission-contents: read
+
+      - name: Verify exact producer evidence App scope
+        if: env.SECURITY_RELEASE == 'true'
+        env:
+          APP_INSTALLATION_ID: ${{ steps.producer-app.outputs.installation-id }}
+          APP_SLUG: ${{ steps.producer-app.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.producer-app.outputs.token }}
+        run: |
+          set -euo pipefail
+          test "$APP_SLUG" = "lightning-it-release-automation"
+          test "$APP_INSTALLATION_ID" = "148019054"
+          actual_repositories="$(
+            gh api --paginate "installation/repositories?per_page=100" \
+              | jq -sc '[.[].repositories[].full_name] | sort | unique'
+          )"
+          test "$actual_repositories" = \
+            '["lightning-it/ansible-collection-supplementary"]'
 
       - name: Set up QEMU (multi-arch)
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8  # v4
@@ -233,7 +563,7 @@ jobs:
           exit-code: "1"
 
       - name: Log in to Quay.io
-        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7  # v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.QUAY_USERNAME }}
@@ -241,6 +571,290 @@ jobs:
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+
+      - name: Revalidate MLX-90 producer evidence and resolve the merged consumer PR
+        if: env.SECURITY_RELEASE == 'true'
+        env:
+          CONSUMER_TOKEN: ${{ github.token }}
+          PRODUCER_TOKEN: ${{ steps.producer-app.outputs.token }}
+        run: |
+          set -euo pipefail
+          export GH_TOKEN="$PRODUCER_TOKEN"
+          receipt_blob="$(git rev-parse \
+            "${FULL_SHA}:.lit/security-release-receipt.json")"
+          [[ "$receipt_blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+          test "$(git cat-file -t "$receipt_blob")" = blob
+          receipt_digest="sha256:$(git cat-file blob "$receipt_blob" \
+            | sha256sum | awk '{print $1}')"
+          receipt_json="$(git cat-file blob "$receipt_blob")"
+          jq -e 'type == "object"' <<<"$receipt_json" >/dev/null
+          evidence_url="$(jq -er '.evidenceUrl' <<<"$receipt_json")"
+          evidence_digest="$(jq -er '.evidenceDigest' <<<"$receipt_json")"
+          base_sha="$(jq -er '.baseSha' <<<"$receipt_json")"
+          [[ "$evidence_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]]
+          receipt_dir="$(mktemp -d "${RUNNER_TEMP:?}/mlx90-source-receipt.XXXXXX")"
+          chmod 0700 "$receipt_dir"
+          receipt_path="${receipt_dir}/security-release-receipt.json"
+          (umask 077 && printf '%s' "$receipt_json" >"$receipt_path")
+          chmod 0400 "$receipt_path"
+          test "$(git hash-object --no-filters -- "$receipt_path")" = "$receipt_blob"
+          base_requirements_blob="$(git rev-parse \
+            "${base_sha}:collections/requirements-base.yml")"
+          [[ "$base_requirements_blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+          base_requirements_digest="sha256:$(git cat-file blob \
+            "$base_requirements_blob" | sha256sum | awk '{print $1}')"
+          base_requirements="${receipt_dir}/requirements-base.yml"
+          (umask 077 && git cat-file blob "$base_requirements_blob" \
+            >"$base_requirements")
+          chmod 0400 "$base_requirements"
+          test "$(git hash-object --no-filters -- "$base_requirements")" = \
+            "$base_requirements_blob"
+          requirements_blob="$(git rev-parse \
+            "${FULL_SHA}:collections/requirements-base.yml")"
+          [[ "$requirements_blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+          requirements_digest="sha256:$(git cat-file blob "$requirements_blob" \
+            | sha256sum | awk '{print $1}')"
+          requirements="${receipt_dir}/current-requirements-base.yml"
+          (umask 077 && git cat-file blob "$requirements_blob" >"$requirements")
+          chmod 0400 "$requirements"
+          tool_dir="$(mktemp -d \
+            "${RUNNER_TEMP:?}/mlx90-consumer-tools.XXXXXX")"
+          chmod 0700 "$tool_dir"
+          for tool in security-release-consumer.py mlx90_secure_files.py; do
+            tool_blob="$(git rev-parse "${FULL_SHA}:scripts/${tool}")"
+            [[ "$tool_blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+            (umask 077 && git cat-file blob "$tool_blob" >"${tool_dir}/${tool}")
+            chmod 0500 "${tool_dir}/${tool}"
+          done
+          prefix="https://github.com/lightning-it/ansible-collection-supplementary/releases/download/"
+          remainder="${evidence_url#"$prefix"}"
+          producer_release_tag="${remainder%%/*}"
+          test "$evidence_url" = \
+            "${prefix}${producer_release_tag}/security-release-evidence.json"
+          [[ "$producer_release_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          release_state="$(gh api \
+            "repos/lightning-it/ansible-collection-supplementary/releases/tags/${producer_release_tag}")"
+          jq -e --arg tag "$producer_release_tag" '
+            .tag_name == $tag and .draft == false and .prerelease == false
+            and (.id | type == "number" and . > 0)
+          ' <<<"$release_state" >/dev/null
+          producer_release_id="$(jq -er .id <<<"$release_state")"
+          producer_sha="$(gh api \
+            "repos/lightning-it/ansible-collection-supplementary/commits/${producer_release_tag}" \
+            --jq .sha)"
+          [[ "$producer_sha" =~ ^[0-9a-f]{40}$ ]]
+          asset_pages="$(gh api --paginate --slurp \
+            "repos/lightning-it/ansible-collection-supplementary/releases/${producer_release_id}/assets?per_page=100")"
+          assets="$(jq '[.[][]]' <<<"$asset_pages")"
+          evidence_dir="${RUNNER_TEMP:?}/mlx90-producer-evidence"
+          verified_assets_dir="${evidence_dir}/assets"
+          install -d -m 0700 "$evidence_dir"
+          download_asset() {
+            local name="$1" output="$2" asset_id
+            asset_id="$(jq -er --arg name "$name" '
+              [.[] | select(.name == $name and .state == "uploaded")]
+              | if length == 1 then .[0].id else error("asset is missing or ambiguous") end
+            ' <<<"$assets")"
+            gh api --header 'Accept: application/octet-stream' \
+              "repos/lightning-it/ansible-collection-supplementary/releases/assets/${asset_id}" \
+              >"$output"
+            test -s "$output"
+          }
+          jq -e --arg url "$evidence_url" '
+            [.[] | select(.name == "security-release-evidence.json")]
+            | length == 1 and .[0].browser_download_url == $url
+          ' <<<"$assets" >/dev/null
+          download_asset security-release-evidence.json \
+            "$evidence_dir/security-release-evidence.json"
+          download_asset SHA256SUMS "$evidence_dir/SHA256SUMS"
+          download_asset SHA256SUMS.sigstore.json \
+            "$evidence_dir/SHA256SUMS.sigstore.json"
+          PYTHONPATH="$tool_dir" python3 \
+            "${tool_dir}/security-release-consumer.py" validate-receipt \
+            --evidence "$evidence_dir/security-release-evidence.json" \
+            --evidence-url "$evidence_url" \
+            --checksums "$evidence_dir/SHA256SUMS" \
+            --checksums-bundle "$evidence_dir/SHA256SUMS.sigstore.json" \
+            --producer-workflow-sha "$producer_sha" \
+            --base-sha "$base_sha" \
+            --base-requirements "$base_requirements" \
+            --base-requirements-digest "$base_requirements_digest" \
+            --requirements "$requirements" \
+            --requirements-digest "$requirements_digest" \
+            --receipt "$receipt_path" \
+            --receipt-digest "$receipt_digest"
+          verified_assets_result="$(
+            PYTHONPATH="$tool_dir" python3 \
+              "${tool_dir}/security-release-consumer.py" verify-assets \
+              --evidence "$evidence_dir/security-release-evidence.json" \
+              --evidence-url "$evidence_url" \
+              --checksums "$evidence_dir/SHA256SUMS" \
+              --checksums-bundle "$evidence_dir/SHA256SUMS.sigstore.json" \
+              --producer-workflow-sha "$producer_sha" \
+              --output "$verified_assets_dir"
+          )"
+          jq -e '
+            keys == ["collectionDigest", "evidenceId", "version"]
+            and (.collectionDigest | test("^sha256:[0-9a-f]{64}$"))
+            and (.evidenceId | test("^[A-Z0-9][A-Z0-9._-]{2,127}$"))
+            and (.version | test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+          ' <<<"$verified_assets_result" >/dev/null
+          verified_collection_digest="$(jq -er '.collectionDigest' \
+            <<<"$verified_assets_result")"
+          evidence_id="$(jq -er '.evidenceId' <<<"$verified_assets_result")"
+          verified_version="$(jq -er '.version' <<<"$verified_assets_result")"
+          verified_collection_artifact="${verified_assets_dir}/collection.tar.gz"
+          verified_collection_signature="${verified_assets_dir}/signature"
+          verified_collection_sbom="${verified_assets_dir}/sbom"
+          verified_collection_provenance="${verified_assets_dir}/provenance"
+          [[ "$verified_collection_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          for asset in \
+            "$verified_collection_artifact" \
+            "$verified_collection_signature" \
+            "$verified_collection_sbom" \
+            "$verified_collection_provenance"; do
+            test -f "$asset"
+          done
+          [[ "$evidence_id" =~ ^[A-Z0-9][A-Z0-9._-]{2,127}$ ]]
+          test "$verified_version" = "$EXPECTED_COLLECTION_VERSION"
+          test "v${verified_version}" = "$producer_release_tag"
+          revocation_count="$(jq --arg id "$evidence_id" '[.[].name | select(
+            . == "security-release-revocation.json"
+            or . == ("security-release-revocation-" + $id + ".json")
+          )] | length' <<<"$assets")"
+          test "$revocation_count" -eq 0
+          export GH_TOKEN="$CONSUMER_TOKEN"
+          test "$(git rev-parse HEAD^1)" = "$base_sha"
+          prs="$(
+            gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/${GITHUB_REPOSITORY}/commits/${FULL_SHA}/pulls"
+          )"
+          pr_count="$(jq '[.[] | select(.merged_at != null and .base.ref == "main" and (.head.ref | startswith("security/mlx90-")))] | length' <<<"$prs")"
+          test "$pr_count" -eq 1
+          consumer_pr="$(jq -r '[.[] | select(.merged_at != null and .base.ref == "main" and (.head.ref | startswith("security/mlx90-")))][0].number' <<<"$prs")"
+          consumer_head_sha="$(jq -r '[.[] | select(.merged_at != null and .base.ref == "main" and (.head.ref | startswith("security/mlx90-")))][0].head.sha' <<<"$prs")"
+          [[ "$consumer_pr" =~ ^[1-9][0-9]*$ ]]
+          [[ "$consumer_head_sha" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD^2)" = "$consumer_head_sha"
+          {
+            echo "MLX90_CONSUMER_PR=${consumer_pr}"
+            echo "MLX90_CONSUMER_HEAD_SHA=${consumer_head_sha}"
+            echo "MLX90_EVIDENCE_ID=${evidence_id}"
+            echo "MLX90_PRODUCER_RELEASE_TAG=${producer_release_tag}"
+            echo "VERIFIED_COLLECTION_ARTIFACT=${verified_collection_artifact}"
+            echo "VERIFIED_COLLECTION_ARTIFACT_DIGEST=${verified_collection_digest}"
+            echo "VERIFIED_COLLECTION_SIGNATURE=${verified_collection_signature}"
+            echo "VERIFIED_COLLECTION_SBOM=${verified_collection_sbom}"
+            echo "VERIFIED_COLLECTION_PROVENANCE=${verified_collection_provenance}"
+          } >>"$GITHUB_ENV"
+
+      - name: Revalidate exact draft immediately before registry mutation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.release-read-app.outputs.token }}
+          RELEASE_BODY_SHA256: ${{ inputs.release_body_sha256 }}
+          RELEASE_ID: ${{ inputs.release_id }}
+          SEMANTIC_RELEASE_RUN_ATTEMPT: ${{ inputs.semantic_release_run_attempt }}
+          SEMANTIC_RELEASE_RUN_ID: ${{ inputs.semantic_release_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_BODY_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          by_id="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")"
+          release_pages="$(gh api --paginate --slurp \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100")"
+          releases="$(jq -ce '[.[][]]' <<<"$release_pages")"
+          list_count="$(jq \
+            --arg tag "$RELEASE_TAG" \
+            --argjson release_id "$RELEASE_ID" '
+              [.[] | select(.id == $release_id and .tag_name == $tag)] | length
+            ' <<<"$releases")"
+          test "$list_count" -eq 1
+          other_pending="$(jq --argjson release_id "$RELEASE_ID" '[
+            .[]
+            | select(.id != $release_id)
+            | select(.draft == true and .prerelease == false)
+            | select(.tag_name | test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))
+          ] | length' <<<"$releases")"
+          test "$other_pending" -eq 0
+          by_list="$(jq -ce \
+            --argjson release_id "$RELEASE_ID" '
+              [.[] | select(.id == $release_id)][0]
+            ' <<<"$releases")"
+          for release in "$by_id" "$by_list"; do
+            jq -e \
+              --arg sha "$FULL_SHA" \
+              --arg tag "$RELEASE_TAG" \
+              --argjson release_id "$RELEASE_ID" '
+                .id == $release_id
+                and .tag_name == $tag
+                and .target_commitish == $sha
+                and .name == $tag
+                and .draft == true
+                and .prerelease == false
+                and .immutable == false
+                and .published_at == null
+                and .author.login == "lightning-it-release-automation[bot]"
+              ' <<<"$release" >/dev/null
+            actual_body_sha256="$(
+              jq -jr '.body | select(type == "string")' <<<"$release" \
+                | sha256sum | awk '{print $1}'
+            )"
+            test "$actual_body_sha256" = "$RELEASE_BODY_SHA256"
+          done
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG}" \
+            --jq .sha)" = "$FULL_SHA"
+          boundary_blob="$(git rev-parse \
+            "${FULL_SHA}:scripts/validate-semantic-release-boundary.sh")"
+          boundary_script="$(mktemp \
+            "${RUNNER_TEMP:?}/validate-semantic-release-boundary.XXXXXX")"
+          (umask 077 && git cat-file blob "$boundary_blob" >"$boundary_script")
+          chmod 0500 "$boundary_script"
+          bash "$boundary_script" "$FULL_SHA"
+          completed_orchestrator=
+          for poll in {1..24}; do
+            orchestrator="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${SEMANTIC_RELEASE_RUN_ID}/attempts/${SEMANTIC_RELEASE_RUN_ATTEMPT}")"
+            jq -e \
+              --arg repository "$GITHUB_REPOSITORY" \
+              --argjson run_attempt "$SEMANTIC_RELEASE_RUN_ATTEMPT" \
+              --argjson run_id "$SEMANTIC_RELEASE_RUN_ID" '
+                .id == $run_id
+                and .run_attempt == $run_attempt
+                and .event == "push"
+                and .head_branch == "main"
+                and (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
+                and .head_repository.full_name == $repository
+                and .path == ".github/workflows/semantic-release.yml"
+              ' <<<"$orchestrator" >/dev/null
+            orchestrator_sha="$(jq -er .head_sha <<<"$orchestrator")"
+            orchestrator_comparison="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/compare/${FULL_SHA}...${orchestrator_sha}")"
+            jq -e --arg source_sha "$FULL_SHA" '
+              (.status == "ahead" or .status == "identical")
+              and .behind_by == 0
+              and .merge_base_commit.sha == $source_sha
+            ' <<<"$orchestrator_comparison" >/dev/null
+            status="$(jq -er .status <<<"$orchestrator")"
+            conclusion="$(jq -r '.conclusion // ""' <<<"$orchestrator")"
+            if [ "$status" = completed ]; then
+              test "$conclusion" = success
+              completed_orchestrator="$orchestrator"
+              break
+            fi
+            if [ "$status" != queued ] && [ "$status" != in_progress ]; then
+              exit 1
+            fi
+            if [ "$poll" -eq 24 ]; then
+              exit 1
+            fi
+            sleep 5
+          done
+          test -n "$completed_orchestrator"
 
       - name: Build and push public image (amd64 + arm64)
         id: build_public
@@ -256,11 +870,7 @@ jobs:
           provenance: mode=max
           build-args: |
             COLLECTION_PROFILE=public
-          tags: |
-            ${{ env.IMAGE_NAME_PUBLIC }}:${{ env.RELEASE_TAG }}
-            ${{ env.IMAGE_NAME_PUBLIC }}:${{ env.VERSION }}
-            ${{ env.IMAGE_NAME_PUBLIC }}:sha-${{ env.SHORT_SHA }}
-            ${{ env.IMAGE_NAME_PUBLIC }}:latest
+          tags: ${{ env.PUBLIC_PUBLISH_TAGS }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ env.FULL_SHA }}
@@ -285,11 +895,7 @@ jobs:
             COLLECTION_PROFILE=certified
           secrets: |
             rh_automation_hub_token=${{ secrets.RH_AUTOMATION_HUB_TOKEN }}
-          tags: |
-            ${{ env.IMAGE_NAME_CERTIFIED }}:${{ env.RELEASE_TAG }}
-            ${{ env.IMAGE_NAME_CERTIFIED }}:${{ env.VERSION }}
-            ${{ env.IMAGE_NAME_CERTIFIED }}:sha-${{ env.SHORT_SHA }}
-            ${{ env.IMAGE_NAME_CERTIFIED }}:latest
+          tags: ${{ env.CERTIFIED_PUBLISH_TAGS }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ env.FULL_SHA }}
@@ -312,11 +918,7 @@ jobs:
           provenance: mode=max
           build-args: |
             COLLECTION_PROFILE=bootstrap
-          tags: |
-            ${{ env.IMAGE_NAME_BOOTSTRAP }}:${{ env.RELEASE_TAG }}
-            ${{ env.IMAGE_NAME_BOOTSTRAP }}:${{ env.VERSION }}
-            ${{ env.IMAGE_NAME_BOOTSTRAP }}:sha-${{ env.SHORT_SHA }}
-            ${{ env.IMAGE_NAME_BOOTSTRAP }}:latest
+          tags: ${{ env.BOOTSTRAP_PUBLISH_TAGS }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ env.FULL_SHA }}
@@ -324,6 +926,23 @@ jobs:
             org.opencontainers.image.created=${{ env.CREATED }}
             org.opencontainers.image.title=${{ github.event.repository.name }}-bootstrap
             org.opencontainers.image.description=${{ github.event.repository.description }}
+
+      - name: Select exact image digests for this release attempt
+        id: release-digests
+        shell: bash
+        env:
+          BUILT_PUBLIC: ${{ steps.build_public.outputs.digest }}
+          BUILT_CERTIFIED: ${{ steps.build_certified.outputs.digest }}
+          BUILT_BOOTSTRAP: ${{ steps.build_bootstrap.outputs.digest }}
+        run: |
+          set -euo pipefail
+          for variant in PUBLIC CERTIFIED BOOTSTRAP; do
+            built_name="BUILT_${variant}"
+            digest="${!built_name:-}"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            lower="${variant,,}"
+            echo "${lower}_digest=${digest}" >>"$GITHUB_OUTPUT"
+          done
 
       - name: Reclaim build cache before release verification
         shell: bash
@@ -333,38 +952,186 @@ jobs:
           docker image prune --all --force
           df -h /
 
-      - name: Verify, scan, sign, and summarize public image
+      - name: Verify, scan, sign, and summarize exact release images
         shell: bash
         env:
-          IMAGE_NAME: ${{ env.IMAGE_NAME_PUBLIC }}
-          IMAGE_DIGEST: ${{ steps.build_public.outputs.digest }}
-        run: bash scripts/devtools-container-release-verify.sh
+          PUBLIC_IMAGE_NAME: ${{ env.IMAGE_NAME_PUBLIC }}
+          PUBLIC_IMAGE_DIGEST: ${{ steps.release-digests.outputs.public_digest }}
+          CERTIFIED_IMAGE_NAME: ${{ env.IMAGE_NAME_CERTIFIED }}
+          CERTIFIED_IMAGE_DIGEST: ${{ steps.release-digests.outputs.certified_digest }}
+          BOOTSTRAP_IMAGE_NAME: ${{ env.IMAGE_NAME_BOOTSTRAP }}
+          BOOTSTRAP_IMAGE_DIGEST: ${{ steps.release-digests.outputs.bootstrap_digest }}
+          EXPECTED_COLLECTION_VERSION: ${{ env.EXPECTED_COLLECTION_VERSION }}
+          VERIFY_RELEASE_TAGS: ${{ env.SECURITY_RELEASE != 'true' }}
+          VERIFY_CONVENIENCE_TAGS: false
+        run: |
+          set -euo pipefail
+          devtools_blob="$(git rev-parse \
+            "${FULL_SHA}:scripts/devtools-container-release-verify.sh")"
+          [[ "$devtools_blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+          test "$(git cat-file -t "$devtools_blob")" = blob
+          object_format="$(git rev-parse --show-object-format)"
+          [[ "$object_format" = sha1 || "$object_format" = sha256 ]]
 
-      - name: Verify, scan, sign, and summarize certified image
-        shell: bash
-        env:
-          IMAGE_NAME: ${{ env.IMAGE_NAME_CERTIFIED }}
-          IMAGE_DIGEST: ${{ steps.build_certified.outputs.digest }}
-        run: bash scripts/devtools-container-release-verify.sh
+          run_exact_devtools() {
+            local image_name="$1"
+            local image_digest="$2"
+            local evidence_name="$3"
+            local expected_version="$4"
+            local devtools_fd
+            exec {devtools_fd}< <(git cat-file blob "$devtools_blob")
+            IMAGE_NAME="$image_name" \
+              IMAGE_DIGEST="$image_digest" \
+              EVIDENCE_NAME="$evidence_name" \
+              EXPECTED_COLLECTION_VERSION="$expected_version" \
+              MLX90_TRUST_COMMIT="$FULL_SHA" \
+              python3 - \
+                "$object_format" "$devtools_blob" "$devtools_fd" <<'PY'
+          import hashlib
+          import hmac
+          import os
+          import stat
+          import subprocess
+          import sys
 
-      - name: Verify, scan, sign, and summarize bootstrap image
+          if len(sys.argv) != 4:
+              raise SystemExit("invalid exact devtools binding")
+          object_format, expected_oid, fd_text = sys.argv[1:]
+          expected_length = {"sha1": 40, "sha256": 64}.get(object_format)
+          if (
+              expected_length is None
+              or not fd_text.isdecimal()
+              or int(fd_text) < 3
+              or len(expected_oid) != expected_length
+              or any(character not in "0123456789abcdef" for character in expected_oid)
+          ):
+              raise SystemExit("invalid exact devtools Git blob binding")
+
+          descriptor = os.dup(int(fd_text))
+          try:
+              metadata = os.fstat(descriptor)
+              if not (stat.S_ISREG(metadata.st_mode) or stat.S_ISFIFO(metadata.st_mode)):
+                  raise SystemExit("invalid exact devtools Git blob descriptor")
+              chunks = []
+              total = 0
+              while True:
+                  chunk = os.read(descriptor, 1024 * 1024)
+                  if not chunk:
+                      break
+                  total += len(chunk)
+                  if total > 4 * 1024 * 1024:
+                      raise SystemExit("oversized exact devtools Git blob")
+                  chunks.append(chunk)
+          finally:
+              os.close(descriptor)
+          payload = b"".join(chunks)
+          if not payload:
+              raise SystemExit("empty exact devtools Git blob")
+          digest = hashlib.new(object_format)
+          digest.update(f"blob {len(payload)}\0".encode("ascii"))
+          digest.update(payload)
+          if not hmac.compare_digest(digest.hexdigest(), expected_oid):
+              raise SystemExit("exact devtools Git blob OID mismatch")
+
+          completed = subprocess.run(
+              ["bash", "-s"],
+              input=payload,
+              env=os.environ.copy(),
+              check=False,
+          )
+          raise SystemExit(completed.returncode)
+          PY
+            exec {devtools_fd}<&-
+          }
+
+          run_exact_devtools \
+            "$PUBLIC_IMAGE_NAME" "$PUBLIC_IMAGE_DIGEST" public \
+            "$EXPECTED_COLLECTION_VERSION"
+          run_exact_devtools \
+            "$CERTIFIED_IMAGE_NAME" "$CERTIFIED_IMAGE_DIGEST" certified \
+            "$EXPECTED_COLLECTION_VERSION"
+          run_exact_devtools \
+            "$BOOTSTRAP_IMAGE_NAME" "$BOOTSTRAP_IMAGE_DIGEST" bootstrap ""
+
+      - name: Define the canonical release SBOM as the public variant SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/sbom-public.cdx.json
+          cp -- dist/sbom-public.cdx.json dist/sbom.cdx.json
+          cmp -- dist/sbom-public.cdx.json dist/sbom.cdx.json
+
+      - name: Bind the Security evidence to a live non-revoked producer release
+        if: env.SECURITY_RELEASE == 'true'
         shell: bash
         env:
-          IMAGE_NAME: ${{ env.IMAGE_NAME_BOOTSTRAP }}
-          IMAGE_DIGEST: ${{ steps.build_bootstrap.outputs.digest }}
-        run: bash scripts/devtools-container-release-verify.sh
+          CONSUMER_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.producer-app.outputs.token }}
+        run: |
+          set -euo pipefail
+          release_state="$(gh api \
+            "repos/lightning-it/ansible-collection-supplementary/releases/tags/${MLX90_PRODUCER_RELEASE_TAG}")"
+          jq -e --arg tag "$MLX90_PRODUCER_RELEASE_TAG" '
+            .tag_name == $tag
+            and .draft == false
+            and .prerelease == false
+            and (.id | type == "number" and . > 0)
+          ' <<<"$release_state" >/dev/null
+          producer_release_id="$(jq -er .id <<<"$release_state")"
+          asset_pages="$(gh api --paginate --slurp \
+            "repos/lightning-it/ansible-collection-supplementary/releases/${producer_release_id}/assets?per_page=100")"
+          assets="$(jq -ce '[.[][]]' <<<"$asset_pages")"
+          jq -e --arg id "$MLX90_EVIDENCE_ID" '
+            type == "array"
+            and all(.[]; .name | type == "string")
+            and ([.[].name | select(
+              . == "security-release-revocation.json"
+              or . == ("security-release-revocation-" + $id + ".json")
+            )] | length) == 0
+          ' <<<"$assets" >/dev/null
+          live_main="$(GH_TOKEN="$CONSUMER_TOKEN" gh api \
+            "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)"
+          [[ "$live_main" =~ ^[0-9a-f]{40}$ ]]
+          comparison="$(GH_TOKEN="$CONSUMER_TOKEN" gh api \
+            "repos/${GITHUB_REPOSITORY}/compare/${FULL_SHA}...${live_main}")"
+          jq -e --arg release_sha "$FULL_SHA" '
+            (.status == "ahead" or .status == "identical")
+            and .behind_by == 0
+            and .merge_base_commit.sha == $release_sha
+          ' <<<"$comparison" >/dev/null
+          release_receipt_blob="$(git rev-parse \
+            "${FULL_SHA}:.lit/security-release-receipt.json")"
+          live_receipt_blob="$(git rev-parse \
+            "${live_main}:.lit/security-release-receipt.json")"
+          test "$live_receipt_blob" = "$release_receipt_blob"
+          release_receipt="$(GH_TOKEN="$CONSUMER_TOKEN" gh api \
+            "repos/${GITHUB_REPOSITORY}/contents/.lit/security-release-receipt.json?ref=${FULL_SHA}")"
+          live_receipt="$(GH_TOKEN="$CONSUMER_TOKEN" gh api \
+            "repos/${GITHUB_REPOSITORY}/contents/.lit/security-release-receipt.json?ref=${live_main}")"
+          test "$(jq -er .sha <<<"$release_receipt")" = \
+            "$release_receipt_blob"
+          test "$(jq -er .sha <<<"$live_receipt")" = "$live_receipt_blob"
+          echo "MLX90_REVOCATION_CHECKED_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            >>"$GITHUB_ENV"
 
       - name: Generate release evidence
         shell: bash
         env:
-          PUBLIC_DIGEST: ${{ steps.build_public.outputs.digest }}
-          CERTIFIED_DIGEST: ${{ steps.build_certified.outputs.digest }}
-          BOOTSTRAP_DIGEST: ${{ steps.build_bootstrap.outputs.digest }}
+          PUBLIC_DIGEST: ${{ steps.release-digests.outputs.public_digest }}
+          CERTIFIED_DIGEST: ${{ steps.release-digests.outputs.certified_digest }}
+          BOOTSTRAP_DIGEST: ${{ steps.release-digests.outputs.bootstrap_digest }}
         run: |
           set -euo pipefail
+          asset_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}"
           tags="$IMAGE_NAME_PUBLIC:$RELEASE_TAG,$IMAGE_NAME_PUBLIC:$VERSION,$IMAGE_NAME_PUBLIC:sha-$SHORT_SHA,$IMAGE_NAME_PUBLIC:latest"
           tags="$tags,$IMAGE_NAME_CERTIFIED:$RELEASE_TAG,$IMAGE_NAME_CERTIFIED:$VERSION,$IMAGE_NAME_CERTIFIED:sha-$SHORT_SHA,$IMAGE_NAME_CERTIFIED:latest"
           tags="$tags,$IMAGE_NAME_BOOTSTRAP:$RELEASE_TAG,$IMAGE_NAME_BOOTSTRAP:$VERSION,$IMAGE_NAME_BOOTSTRAP:sha-$SHORT_SHA,$IMAGE_NAME_BOOTSTRAP:latest"
+          if [ "$SECURITY_RELEASE" = true ]; then
+            candidate_suffix="${FULL_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            tags="$IMAGE_NAME_PUBLIC:mlx90-candidate-$candidate_suffix"
+            tags="$tags,$IMAGE_NAME_CERTIFIED:mlx90-candidate-$candidate_suffix"
+            tags="$tags,$IMAGE_NAME_BOOTSTRAP:mlx90-candidate-$candidate_suffix"
+          fi
           artifacts="$IMAGE_NAME_PUBLIC@$PUBLIC_DIGEST,$IMAGE_NAME_CERTIFIED@$CERTIFIED_DIGEST,$IMAGE_NAME_BOOTSTRAP@$BOOTSTRAP_DIGEST"
           digests="$PUBLIC_DIGEST,$CERTIFIED_DIGEST,$BOOTSTRAP_DIGEST"
           passed_jobs="Build public image for Trivy release gate"
@@ -401,15 +1168,18 @@ jobs:
           TRIVY_STATUS="passed" \
           TRIVY_RELEASE_GATE="passed-before-quay-publish" \
           TRIVY_SEVERITY="CRITICAL" \
-          TRIVY_REPORT="$trivy_reports" \
+          TRIVY_REPORT="$asset_base/sbom.cdx.json" \
+          SBOM_URL="$asset_base/sbom.cdx.json" \
+          PROVENANCE_URL="$asset_base/release-provenance.intoto.jsonl" \
+          SIGNATURE_URL="$asset_base/SHA256SUMS.sigstore.json" \
           python3 scripts/generate-release-evidence.py
 
       - name: Write release provenance
         shell: bash
         env:
-          PUBLIC_DIGEST: ${{ steps.build_public.outputs.digest }}
-          CERTIFIED_DIGEST: ${{ steps.build_certified.outputs.digest }}
-          BOOTSTRAP_DIGEST: ${{ steps.build_bootstrap.outputs.digest }}
+          PUBLIC_DIGEST: ${{ steps.release-digests.outputs.public_digest }}
+          CERTIFIED_DIGEST: ${{ steps.release-digests.outputs.certified_digest }}
+          BOOTSTRAP_DIGEST: ${{ steps.release-digests.outputs.bootstrap_digest }}
         run: |
           set -euo pipefail
           artifacts="$IMAGE_NAME_PUBLIC@$PUBLIC_DIGEST,$IMAGE_NAME_CERTIFIED@$CERTIFIED_DIGEST,$IMAGE_NAME_BOOTSTRAP@$BOOTSTRAP_DIGEST"
@@ -417,29 +1187,341 @@ jobs:
             --mode workflow-release \
             --release-tag "$RELEASE_TAG" \
             --commit "$FULL_SHA" \
-            --subject dist/release-evidence.json \
-            --subject dist/release-evidence.md \
+            --subject dist/assurance-public.json \
+            --subject dist/assurance-certified.json \
+            --subject dist/assurance-bootstrap.json \
+            --subject dist/manifest-public.json \
+            --subject dist/manifest-certified.json \
+            --subject dist/manifest-bootstrap.json \
+            --subject dist/sbom.cdx.json \
+            --subject dist/sbom-public.cdx.json \
+            --subject dist/sbom-certified.cdx.json \
+            --subject dist/sbom-bootstrap.cdx.json \
+            --subject dist/signature-public.json \
+            --subject dist/signature-certified.json \
+            --subject dist/signature-bootstrap.json \
+            --subject dist/installed-collections-public.json \
+            --subject dist/installed-collections-certified.json \
+            --subject dist/installed-collections-bootstrap.json \
             --artifact "$artifacts"
+
+      - name: Enrich MLX-90 release evidence when a receipt is present
+        shell: bash
+        env:
+          RELEASE_ID: ${{ inputs.release_id }}
+        run: |
+          set -euo pipefail
+          asset_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}"
+          if [ "$SECURITY_RELEASE" = true ]; then
+            receipt_blob="$(git rev-parse \
+              "${FULL_SHA}:.lit/security-release-receipt.json")"
+            [[ "$receipt_blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+            test "$(git cat-file -t "$receipt_blob")" = blob
+            receipt_dir="$(mktemp -d \
+              "${RUNNER_TEMP:?}/mlx90-enrichment-receipt.XXXXXX")"
+            chmod 0700 "$receipt_dir"
+            receipt_path="${receipt_dir}/security-release-receipt.json"
+            (umask 077 && git cat-file blob "$receipt_blob" >"$receipt_path")
+            chmod 0400 "$receipt_path"
+            tool_dir="$(mktemp -d \
+              "${RUNNER_TEMP:?}/mlx90-enrichment-tools.XXXXXX")"
+            chmod 0700 "$tool_dir"
+            for tool in enrich-mlx90-release-evidence.py mlx90_secure_files.py; do
+              tool_blob="$(git rev-parse "${FULL_SHA}:scripts/${tool}")"
+              [[ "$tool_blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+              (umask 077 && git cat-file blob "$tool_blob" \
+                >"${tool_dir}/${tool}")
+              chmod 0500 "${tool_dir}/${tool}"
+            done
+            PYTHONPATH="$tool_dir" python3 \
+              "${tool_dir}/enrich-mlx90-release-evidence.py" \
+              --receipt "$receipt_path" \
+              --require-receipt \
+              --consumer-merge-sha "$FULL_SHA" \
+              --consumer-head-sha "$MLX90_CONSUMER_HEAD_SHA" \
+              --consumer-pull-request "$MLX90_CONSUMER_PR" \
+              --release-id "$RELEASE_ID" \
+              --release-run-id "$GITHUB_RUN_ID" \
+              --release-run-attempt "$GITHUB_RUN_ATTEMPT" \
+              --revocation-checked-at "$MLX90_REVOCATION_CHECKED_AT" \
+              --release-asset-base "$asset_base"
+          else
+            tool_dir="$(mktemp -d \
+              "${RUNNER_TEMP:?}/release-enrichment-tools.XXXXXX")"
+            chmod 0700 "$tool_dir"
+            for tool in enrich-mlx90-release-evidence.py mlx90_secure_files.py; do
+              tool_blob="$(git rev-parse "${FULL_SHA}:scripts/${tool}")"
+              [[ "$tool_blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+              (umask 077 && git cat-file blob "$tool_blob" \
+                >"${tool_dir}/${tool}")
+              chmod 0500 "${tool_dir}/${tool}"
+            done
+            PYTHONPATH="$tool_dir" python3 \
+              "${tool_dir}/enrich-mlx90-release-evidence.py" \
+              --consumer-merge-sha "$FULL_SHA" \
+              --release-asset-base "$asset_base"
+          fi
 
       - name: Sign release evidence assets
         shell: bash
+        env:
+          BOOTSTRAP_DIGEST: ${{ steps.release-digests.outputs.bootstrap_digest }}
+          CERTIFIED_DIGEST: ${{ steps.release-digests.outputs.certified_digest }}
+          PUBLIC_DIGEST: ${{ steps.release-digests.outputs.public_digest }}
+          RELEASE_ID: ${{ inputs.release_id }}
         run: |
           set -euo pipefail
-          cd dist
-          sha256sum release-evidence.json release-evidence.md release-provenance.intoto.jsonl > SHA256SUMS
-          cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
+          chmod 0700 dist
+          case "$(uname -m)" in
+            x86_64)
+              trivy_image="docker.io/aquasec/trivy:0.72.0@sha256:c6e969c5662a546ad5de4a73c2a6b7a7c627f86d916903e175aa623af5b97ada"
+              ;;
+            aarch64|arm64)
+              trivy_image="docker.io/aquasec/trivy:0.72.0@sha256:405015d1cd07a2630301169e694a5a420afc4dd553fb462189d4f109ba56a6df"
+              ;;
+            *)
+              echo "ERROR: unsupported signing architecture." >&2
+              exit 1
+              ;;
+          esac
+          signed_dir="$(mktemp -d \
+            "${RUNNER_TEMP:?}/mlx90-signed-release-assets.XXXXXX")"
+          chmod 0700 "$signed_dir"
+          sign_args=(
+            --source dist
+            --output "$signed_dir"
+            --repository "$GITHUB_REPOSITORY"
+            --release-tag "$RELEASE_TAG"
+            --source-sha "$FULL_SHA"
+            --collection-version "$EXPECTED_COLLECTION_VERSION"
+            --release-id "$RELEASE_ID"
+            --workflow-run-id "$GITHUB_RUN_ID"
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT"
+            --trivy-image "$trivy_image"
+            --variant "public=${IMAGE_NAME_PUBLIC}@${PUBLIC_DIGEST}"
+            --variant "certified=${IMAGE_NAME_CERTIFIED}@${CERTIFIED_DIGEST}"
+            --variant "bootstrap=${IMAGE_NAME_BOOTSTRAP}@${BOOTSTRAP_DIGEST}"
+          )
+          receipt_blob="-"
+          receipt_fd_arg="-1"
+          if [ "$SECURITY_RELEASE" = true ]; then
+            receipt_blob="$(git rev-parse \
+              "${FULL_SHA}:.lit/security-release-receipt.json")"
+            [[ "$receipt_blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+            test "$(git cat-file -t "$receipt_blob")" = blob
+            receipt_digest="sha256:$(git cat-file blob "$receipt_blob" \
+              | sha256sum | awk '{print $1}')"
+            exec {receipt_fd}< <(git cat-file blob "$receipt_blob")
+            receipt_fd_arg="$receipt_fd"
+            sign_args+=(
+              --security
+              --receipt-fd "$receipt_fd_arg"
+              --receipt-digest "$receipt_digest"
+              --consumer-head-sha "$MLX90_CONSUMER_HEAD_SHA"
+              --consumer-pull-request "$MLX90_CONSUMER_PR"
+              --revocation-checked-at "$MLX90_REVOCATION_CHECKED_AT"
+              --producer-artifact "$VERIFIED_COLLECTION_ARTIFACT"
+              --producer-artifact-digest "$VERIFIED_COLLECTION_ARTIFACT_DIGEST"
+              --producer-signature "$VERIFIED_COLLECTION_SIGNATURE"
+              --producer-sbom "$VERIFIED_COLLECTION_SBOM"
+              --producer-provenance "$VERIFIED_COLLECTION_PROVENANCE"
+            )
+          fi
+          secure_blob="$(git rev-parse \
+            "${FULL_SHA}:scripts/mlx90_secure_files.py")"
+          signer_blob="$(git rev-parse \
+            "${FULL_SHA}:scripts/mlx90_sign_release_assets.py")"
+          for blob in "$secure_blob" "$signer_blob"; do
+            [[ "$blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+            test "$(git cat-file -t "$blob")" = blob
+          done
+          object_format="$(git rev-parse --show-object-format)"
+          [[ "$object_format" = sha1 || "$object_format" = sha256 ]]
+          exec {secure_fd}< <(git cat-file blob "$secure_blob")
+          exec {signer_fd}< <(git cat-file blob "$signer_blob")
+          sign_result="$(python3 - \
+            "$object_format" \
+            "$secure_blob" "$secure_fd" \
+            "$signer_blob" "$signer_fd" \
+            "$receipt_blob" "$receipt_fd_arg" \
+            "${sign_args[@]}" <<'PY'
+          import fcntl
+          import hashlib
+          import hmac
+          import os
+          import stat
+          import sys
+          import types
+
+          object_format = sys.argv[1]
+          secure_oid, secure_fd_text = sys.argv[2:4]
+          signer_oid, signer_fd_text = sys.argv[4:6]
+          receipt_oid, receipt_fd_text = sys.argv[6:8]
+          arguments = sys.argv[8:]
+          expected_length = {"sha1": 40, "sha256": 64}.get(object_format)
+          if expected_length is None:
+              raise SystemExit("unsupported Git object format")
+
+          def read_verified_blob(fd_text, expected_oid, label, max_bytes):
+              if (
+                  not fd_text.isdecimal()
+                  or int(fd_text) < 3
+                  or len(expected_oid) != expected_length
+                  or any(
+                      character not in "0123456789abcdef"
+                      for character in expected_oid
+                  )
+              ):
+                  raise SystemExit(f"invalid {label} Git blob binding")
+              descriptor = os.dup(int(fd_text))
+              try:
+                  metadata = os.fstat(descriptor)
+                  if not (
+                      stat.S_ISREG(metadata.st_mode)
+                      or stat.S_ISFIFO(metadata.st_mode)
+                  ):
+                      raise SystemExit(f"invalid {label} Git blob descriptor")
+                  chunks = []
+                  total = 0
+                  while True:
+                      chunk = os.read(descriptor, 1024 * 1024)
+                      if not chunk:
+                          break
+                      total += len(chunk)
+                      if total > max_bytes:
+                          raise SystemExit(f"oversized {label} Git blob")
+                      chunks.append(chunk)
+              finally:
+                  os.close(descriptor)
+              payload = b"".join(chunks)
+              if not payload:
+                  raise SystemExit(f"empty {label} Git blob")
+              digest = hashlib.new(object_format)
+              digest.update(f"blob {len(payload)}\0".encode("ascii"))
+              digest.update(payload)
+              if not hmac.compare_digest(digest.hexdigest(), expected_oid):
+                  raise SystemExit(f"{label} Git blob OID mismatch")
+              return payload
+
+          secure_fd = int(secure_fd_text)
+          signer_fd = int(signer_fd_text)
+          secure_payload = read_verified_blob(
+              secure_fd_text, secure_oid, "secure helper", 4 * 1024 * 1024
+          )
+          signer_payload = read_verified_blob(
+              signer_fd_text, signer_oid, "release signer", 4 * 1024 * 1024
+          )
+          receipt_snapshot = None
+          if receipt_oid != "-" or receipt_fd_text != "-1":
+              receipt_payload = read_verified_blob(
+                  receipt_fd_text, receipt_oid, "security receipt", 1024 * 1024
+              )
+              receipt_snapshot = os.memfd_create(
+                  "mlx90-security-receipt",
+                  os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING,
+              )
+              view = memoryview(receipt_payload)
+              while view:
+                  written = os.write(receipt_snapshot, view)
+                  if written <= 0:
+                      raise SystemExit("cannot snapshot security receipt")
+                  view = view[written:]
+              os.lseek(receipt_snapshot, 0, os.SEEK_SET)
+              os.fchmod(receipt_snapshot, 0o400)
+              fcntl.fcntl(
+                  receipt_snapshot,
+                  fcntl.F_ADD_SEALS,
+                  fcntl.F_SEAL_SEAL
+                  | fcntl.F_SEAL_SHRINK
+                  | fcntl.F_SEAL_GROW
+                  | fcntl.F_SEAL_WRITE,
+              )
+              try:
+                  receipt_argument = arguments.index("--receipt-fd") + 1
+              except ValueError as exc:
+                  raise SystemExit("security receipt descriptor argument is missing") from exc
+              if arguments[receipt_argument] != receipt_fd_text:
+                  raise SystemExit("security receipt descriptor argument is inconsistent")
+              arguments[receipt_argument] = str(receipt_snapshot)
+          elif "--receipt-fd" in arguments:
+              raise SystemExit("ordinary release contains a receipt descriptor")
+
+          secure_name = f"/dev/fd/{secure_fd}"
+          signer_name = f"/dev/fd/{signer_fd}"
+          secure_code = compile(secure_payload, secure_name, "exec")
+          secure_module = types.ModuleType("mlx90_secure_files")
+          secure_module.__file__ = secure_name
+          sys.modules[secure_module.__name__] = secure_module
+          exec(secure_code, secure_module.__dict__)
+          signer_code = compile(signer_payload, signer_name, "exec")
+          sys.argv = [signer_name, *arguments]
+          namespace = {
+              "__name__": "__main__",
+              "__file__": signer_name,
+              "__package__": None,
+          }
+          exec(signer_code, namespace)
+          PY
+          )"
+          base_assets='[
+            "SHA256SUMS",
+            "SHA256SUMS.sigstore.json",
+            "assurance-bootstrap.json",
+            "assurance-certified.json",
+            "assurance-public.json",
+            "installed-collections-bootstrap.json",
+            "installed-collections-certified.json",
+            "installed-collections-public.json",
+            "manifest-bootstrap.json",
+            "manifest-certified.json",
+            "manifest-public.json",
+            "release-evidence.json",
+            "release-evidence.md",
+            "release-provenance.intoto.jsonl",
+            "sbom-bootstrap.cdx.json",
+            "sbom-certified.cdx.json",
+            "sbom-public.cdx.json",
+            "sbom.cdx.json",
+            "signature-bootstrap.json",
+            "signature-certified.json",
+            "signature-public.json"
+          ]'
+          if [ "$SECURITY_RELEASE" = true ]; then
+            expected_assets="$(jq -c '. + [
+              "mlx90-container-evidence.json",
+              "mlx90-container-evidence.json.sigstore.json"
+            ] | sort' <<<"$base_assets")"
+          else
+            expected_assets="$(jq -c 'sort' <<<"$base_assets")"
+          fi
+          jq -e --arg root "$signed_dir/" --argjson expected "$expected_assets" '
+            (keys | sort) == $expected
+            and all(to_entries[];
+              .value.path == null
+              and (.value.digest | test("^sha256:[0-9a-f]{64}$"))
+              and (.value.size | type == "number" and . > 0 and . <= 16777216)
+            )
+          ' <<<"$sign_result" >/dev/null
+          echo "RELEASE_EVIDENCE_DIR=$signed_dir" >>"$GITHUB_ENV"
 
       - name: Upload release evidence artifact
-        if: always()
+        if: success()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: release-evidence
           path: |
-            dist/release-evidence.json
-            dist/release-evidence.md
-            dist/release-provenance.intoto.jsonl
-            dist/SHA256SUMS
-            dist/SHA256SUMS.sigstore.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/release-evidence.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/release-evidence.md
+            ${{ env.RELEASE_EVIDENCE_DIR }}/release-provenance.intoto.jsonl
+            ${{ env.RELEASE_EVIDENCE_DIR }}/assurance-*.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/manifest-*.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/signature-*.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/sbom.cdx.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/sbom-*.cdx.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/installed-collections-*.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/mlx90-container-evidence.json*
+            ${{ env.RELEASE_EVIDENCE_DIR }}/SHA256SUMS
+            ${{ env.RELEASE_EVIDENCE_DIR }}/SHA256SUMS.sigstore.json
           if-no-files-found: error
 
   upload-trivy-sarif:
@@ -460,7 +1542,7 @@ jobs:
           path: sarif
 
       - name: Upload Trivy public release gate SARIF
-        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81  # v4
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38  # v4
         with:
           sarif_file: sarif/trivy-public-release-gate.sarif
           category: trivy-public
@@ -472,7 +1554,7 @@ jobs:
           path: sarif
 
       - name: Upload Trivy certified release gate SARIF
-        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81  # v4
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38  # v4
         with:
           sarif_file: sarif/trivy-certified-release-gate.sarif
           category: trivy-certified
@@ -484,7 +1566,7 @@ jobs:
           path: sarif
 
       - name: Upload Trivy bootstrap release gate SARIF
-        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81  # v4
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38  # v4
         with:
           sarif_file: sarif/trivy-bootstrap-release-gate.sarif
           category: trivy-bootstrap
@@ -492,12 +1574,20 @@ jobs:
   attach-release-evidence:
     name: Attach signed release evidence
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, upload-trivy-sarif]
+    environment: container-release-publish
     permissions:
       actions: read
       contents: read
 
     steps:
+      - name: Checkout the exact release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          ref: ${{ needs.build.outputs.release_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Download release evidence artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
@@ -511,14 +1601,20 @@ jobs:
           client-id: ${{ vars.RELEASE_AUTOMATION_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
+          repositories: container-ee-wunder-ansible-ubi9
+          permission-actions: write
+          permission-contents: write
 
       - name: Resolve release automation App bot identity
         id: release-bot
         env:
+          APP_INSTALLATION_ID: ${{ steps.release-app.outputs.installation-id }}
           APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
         run: |
           set -euo pipefail
+          test "$APP_SLUG" = "lightning-it-release-automation"
+          test "$APP_INSTALLATION_ID" = "148019054"
           bot_json="$(gh api "users/${APP_SLUG}%5Bbot%5D" 2>/dev/null || printf '{}')"
           login="$(jq -r '.login // ""' <<<"$bot_json")"
           bot_id="$(jq -r '.id // ""' <<<"$bot_json")"
@@ -526,32 +1622,833 @@ jobs:
             echo "::error::Unable to resolve the release automation App bot identity."
             exit 1
           fi
+          actual_repositories="$(
+            gh api --paginate "installation/repositories?per_page=100" \
+              | jq -sc '[.[].repositories[].full_name] | sort | unique'
+          )"
+          jq -e \
+            --argjson actual "$actual_repositories" '
+              $actual == [
+                "lightning-it/container-ee-wunder-ansible-ubi9"
+              ]
+            ' <<<"{}" >/dev/null
           echo "login=$login" >>"$GITHUB_OUTPUT"
           echo "email=${bot_id}+${login}@users.noreply.github.com" >>"$GITHUB_OUTPUT"
 
+      - name: Mint final revocation read token
+        if: needs.build.outputs.security_release == 'true'
+        id: producer-app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ansible-collection-supplementary
+          permission-contents: read
+
+      - name: Verify exact final revocation App scope
+        if: needs.build.outputs.security_release == 'true'
+        env:
+          APP_INSTALLATION_ID: ${{ steps.producer-app.outputs.installation-id }}
+          APP_SLUG: ${{ steps.producer-app.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.producer-app.outputs.token }}
+        run: |
+          set -euo pipefail
+          test "$APP_SLUG" = "lightning-it-release-automation"
+          test "$APP_INSTALLATION_ID" = "148019054"
+          actual_repositories="$(
+            gh api --paginate "installation/repositories?per_page=100" \
+              | jq -sc '[.[].repositories[].full_name] | sort | unique'
+          )"
+          test "$actual_repositories" = \
+            '["lightning-it/ansible-collection-supplementary"]'
+
+      - name: Install cosign for release-asset authentication
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+
       - name: Attach signed release evidence
+        id: release-assets
         shell: bash
         env:
+          APP_BOT_LOGIN: ${{ steps.release-bot.outputs.login }}
+          CONSUMER_MERGE_SHA: ${{ needs.build.outputs.release_sha }}
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          RELEASE_BODY_SHA256: ${{ needs.build.outputs.release_body_sha256 }}
+          RELEASE_ID: ${{ needs.build.outputs.release_id }}
+          RELEASE_TAG_INPUT: ${{ needs.build.outputs.release_tag }}
+          SECURITY_RELEASE: ${{ needs.build.outputs.security_release }}
         run: |
           set -euo pipefail
 
-          if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error::Missing required secret: steps.release-app.outputs.token"
-            exit 1
-          fi
+          [[ "$RELEASE_BODY_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$RELEASE_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$RELEASE_TAG_INPUT" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$CONSUMER_MERGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$CONSUMER_MERGE_SHA"
+          test "$GITHUB_REF" = "refs/tags/${RELEASE_TAG_INPUT}"
+          test "$GITHUB_SHA" = "$CONSUMER_MERGE_SHA"
 
-          if ! gh auth status --hostname github.com >/dev/null 2>&1; then
-            echo "::error::steps.release-app.outputs.token is not a valid GitHub token"
-            exit 1
+          release="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")"
+          upload_url_template="$(jq -er .upload_url <<<"$release")"
+          expected_upload_url="https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets{?name,label}"
+          test "$upload_url_template" = "$expected_upload_url"
+          upload_base="${expected_upload_url%\{\?name,label\}}"
+          if jq -e \
+            --arg author "$APP_BOT_LOGIN" \
+            --arg sha "$CONSUMER_MERGE_SHA" \
+            --arg tag "$RELEASE_TAG_INPUT" \
+            --argjson release_id "$RELEASE_ID" '
+              .id == $release_id
+              and .tag_name == $tag
+              and .target_commitish == $sha
+              and .name == $tag
+              and .prerelease == false
+              and .author.login == $author
+              and .draft == true
+              and .immutable == false
+              and .published_at == null
+            ' \
+            <<<"$release" >/dev/null; then
+            release_mode=draft
+          else
+            jq -e \
+              --arg author "$APP_BOT_LOGIN" \
+              --arg sha "$CONSUMER_MERGE_SHA" \
+              --arg tag "$RELEASE_TAG_INPUT" \
+              --argjson release_id "$RELEASE_ID" '
+                .id == $release_id
+                and .tag_name == $tag
+                and .target_commitish == $sha
+                and .name == $tag
+                and .prerelease == false
+                and .author.login == $author
+                and .draft == false
+                and .immutable == true
+                and (.published_at | type == "string" and length > 0)
+              ' \
+              <<<"$release" >/dev/null
+            release_mode=published
           fi
+          actual_body_sha256="$(
+            jq -jr '.body | select(type == "string")' <<<"$release" \
+              | sha256sum | awk '{print $1}'
+          )"
+          test "$actual_body_sha256" = "$RELEASE_BODY_SHA256"
+          release_pages="$(gh api --paginate --slurp \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100")"
+          releases="$(jq -ce '[.[][]]' <<<"$release_pages")"
+          test "$(jq \
+            --arg tag "$RELEASE_TAG_INPUT" \
+            --argjson release_id "$RELEASE_ID" '
+              ([.[] | select(.tag_name == $tag)] | length) == 1
+              and ([.[] | select(.id == $release_id)] | length) == 1
+            ' <<<"$releases")" = true
+          listed_release="$(jq -ce \
+            --argjson release_id "$RELEASE_ID" '
+              [.[] | select(.id == $release_id)][0]
+            ' <<<"$releases")"
+          test "$(jq -er .name <<<"$listed_release")" = "$RELEASE_TAG_INPUT"
+          listed_body_sha256="$(
+            jq -jr '.body | select(type == "string")' <<<"$listed_release" \
+              | sha256sum | awk '{print $1}'
+          )"
+          test "$listed_body_sha256" = "$RELEASE_BODY_SHA256"
+          test "$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG_INPUT}" --jq .sha)" = \
+            "$CONSUMER_MERGE_SHA"
 
-          gh release upload \
-            --repo "${GITHUB_REPOSITORY}" \
-            "${{ github.event.release.tag_name }}" \
+          release_assets=(
             dist/release-evidence.json \
             dist/release-evidence.md \
             dist/release-provenance.intoto.jsonl \
+            dist/assurance-public.json \
+            dist/assurance-certified.json \
+            dist/assurance-bootstrap.json \
+            dist/manifest-public.json \
+            dist/manifest-certified.json \
+            dist/manifest-bootstrap.json \
+            dist/signature-public.json \
+            dist/signature-certified.json \
+            dist/signature-bootstrap.json \
+            dist/sbom.cdx.json \
+            dist/sbom-public.cdx.json \
+            dist/sbom-certified.cdx.json \
+            dist/sbom-bootstrap.cdx.json \
+            dist/installed-collections-public.json \
+            dist/installed-collections-certified.json \
+            dist/installed-collections-bootstrap.json \
             dist/SHA256SUMS \
-            dist/SHA256SUMS.sigstore.json \
-            --clobber
+            dist/SHA256SUMS.sigstore.json
+          )
+          if [ "$SECURITY_RELEASE" = true ]; then
+            release_assets+=(
+              dist/mlx90-container-evidence.json
+              dist/mlx90-container-evidence.json.sigstore.json
+            )
+          else
+            test ! -e dist/mlx90-container-evidence.json
+            test ! -e dist/mlx90-container-evidence.json.sigstore.json
+          fi
+          source_assets=("${release_assets[@]}")
+          chmod 0700 dist
+          tool_dir="$(mktemp -d \
+            "${RUNNER_TEMP:?}/mlx90-release-asset-tools.XXXXXX")"
+          chmod 0700 "$tool_dir"
+          for tool in mlx90_snapshot_set.py mlx90_secure_files.py; do
+            tool_blob="$(git rev-parse \
+              "${CONSUMER_MERGE_SHA}:scripts/${tool}")"
+            [[ "$tool_blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+            (umask 077 && git cat-file blob "$tool_blob" >"${tool_dir}/${tool}")
+            chmod 0500 "${tool_dir}/${tool}"
+          done
+          snapshot_dir="$(mktemp -d \
+            "${RUNNER_TEMP:?}/mlx90-release-asset-snapshots.XXXXXX")"
+          chmod 0700 "$snapshot_dir"
+          snapshot_args=()
+          for asset in "${source_assets[@]}"; do
+            asset_name="${asset##*/}"
+            [[ "$asset_name" =~ ^[A-Za-z0-9._-]+$ ]]
+            snapshot_args+=(--file "${asset_name}:67108864")
+          done
+          snapshot_result="$(PYTHONPATH="$tool_dir" python3 \
+            "${tool_dir}/mlx90_snapshot_set.py" \
+            --source dist \
+            --output "$snapshot_dir" \
+            "${snapshot_args[@]}")"
+          expected_names="$(printf '%s\n' "${source_assets[@]##*/}" | sort -u)"
+          test "$(wc -l <<<"$expected_names" | tr -d ' ')" -eq \
+            "${#source_assets[@]}"
+          expected_names_json="$(printf '%s\n' "$expected_names" \
+            | jq -Rsc 'split("\n") | map(select(length > 0)) | sort')"
+          jq -e --arg root "$snapshot_dir/" --argjson expected "$expected_names_json" '
+            (keys | sort) == $expected
+            and all(to_entries[];
+              .value.path == ($root + .key)
+              and (.value.digest | test("^sha256:[0-9a-f]{64}$"))
+              and (.value.size | type == "number" and . > 0 and . <= 67108864)
+            )
+          ' <<<"$snapshot_result" >/dev/null
+          release_assets=()
+          while IFS= read -r asset_name; do
+            release_assets+=("${snapshot_dir}/${asset_name}")
+          done <<<"$expected_names"
+          signed_names="$(sed -nE \
+            's/^[0-9a-f]{64} [ *]([A-Za-z0-9][A-Za-z0-9._-]{0,127})$/\1/p' \
+            "${snapshot_dir}/SHA256SUMS" | sort -u)"
+          expected_signed_names="$(printf '%s\n' "$expected_names" \
+            | sed '/^SHA256SUMS$/d;/^SHA256SUMS.sigstore.json$/d')"
+          test "$signed_names" = "$expected_signed_names"
+          test "$(wc -l <"${snapshot_dir}/SHA256SUMS" | tr -d '[:space:]')" = \
+            "$(wc -l <<<"$expected_signed_names" | tr -d '[:space:]')"
+          cosign verify-blob \
+            --bundle "${snapshot_dir}/SHA256SUMS.sigstore.json" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/container-build-publish.yml@refs/tags/${RELEASE_TAG_INPUT}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-github-workflow-sha "$CONSUMER_MERGE_SHA" \
+            "${snapshot_dir}/SHA256SUMS"
+          (cd "$snapshot_dir" && sha256sum --check --strict SHA256SUMS)
+          if [ "$SECURITY_RELEASE" = true ]; then
+            cosign verify-blob \
+              --bundle "${snapshot_dir}/mlx90-container-evidence.json.sigstore.json" \
+              --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/container-build-publish.yml@refs/tags/${RELEASE_TAG_INPUT}" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --certificate-github-workflow-sha "$CONSUMER_MERGE_SHA" \
+              "${snapshot_dir}/mlx90-container-evidence.json"
+            evidence_run_id="$(jq -er '.release.workflowRunId' \
+              "${snapshot_dir}/mlx90-container-evidence.json")"
+            evidence_run_attempt="$(jq -er '.release.workflowRunAttempt' \
+              "${snapshot_dir}/mlx90-container-evidence.json")"
+            test "$evidence_run_id" = "$GITHUB_RUN_ID"
+            [[ "$evidence_run_attempt" =~ ^[1-9][0-9]*$ ]]
+            test "$evidence_run_attempt" -le "$GITHUB_RUN_ATTEMPT"
+          fi
+          existing_pages="$(gh api --paginate --slurp \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100")"
+          existing_json="$(jq -ce '[.[][]]' <<<"$existing_pages")"
+          jq -e \
+            --arg api_prefix "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/" \
+            --arg download_prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG_INPUT}/" \
+            --arg uploader "$APP_BOT_LOGIN" \
+            --argjson expected "$expected_names_json" '
+              type == "array"
+              and ([.[].name] | length) == ([.[].name] | unique | length)
+              and all(.[];
+                .name as $name
+                | ($expected | index($name)) != null
+                and (.id | type == "number" and . > 0)
+                and .state == "uploaded"
+                and (.size | type == "number" and . > 0)
+                and (.digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+                and .uploader.login == $uploader
+                and .url == ($api_prefix + (.id | tostring))
+                and .browser_download_url == ($download_prefix + .name)
+              )
+            ' <<<"$existing_json" >/dev/null
+          if [ "$release_mode" = published ]; then
+            test "$(jq -c '[.[].name] | sort' <<<"$existing_json")" = \
+              "$(jq -c . <<<"$expected_names_json")"
+          fi
+          probe_dir="${RUNNER_TEMP:?}/probe-existing-release-assets"
+          install -d -m 0700 "$probe_dir"
+          reset_draft=false
+          for asset in "${release_assets[@]}"; do
+            asset_name="${asset##*/}"
+            expected_digest="$(jq -er --arg name "$asset_name" \
+              '.[$name].digest' <<<"$snapshot_result")"
+            asset_count="$(jq --arg name "$asset_name" \
+              '[.[] | select(.name == $name)] | length' <<<"$existing_json")"
+            if [ "$asset_count" -eq 1 ]; then
+              asset_id="$(jq -er --arg name "$asset_name" \
+                '[.[] | select(.name == $name)][0].id' <<<"$existing_json")"
+              actual_digest="$(jq -er --arg name "$asset_name" \
+                '[.[] | select(.name == $name)][0].digest' <<<"$existing_json")"
+              if [ "$actual_digest" != "$expected_digest" ]; then
+                reset_draft=true
+                break
+              fi
+              gh api \
+                -H 'Accept: application/octet-stream' \
+                "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+                >"$probe_dir/$asset_name"
+              if ! cmp -- "$asset" "$probe_dir/$asset_name"; then
+                reset_draft=true
+                break
+              fi
+            fi
+          done
+          if [ "$reset_draft" = true ]; then
+            test "$release_mode" = draft
+            while IFS= read -r asset_id; do
+              [[ "$asset_id" =~ ^[1-9][0-9]*$ ]]
+              gh api \
+                --method DELETE \
+                -H 'X-GitHub-Api-Version: 2026-03-10' \
+                "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+            done < <(jq -r '.[].id' <<<"$existing_json" | sort -n)
+            reset_pages="$(gh api --paginate --slurp \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100")"
+            existing_json="$(jq -ce '[.[][]]' <<<"$reset_pages")"
+            test "$(jq length <<<"$existing_json")" -eq 0
+          fi
+          existing_dir="${RUNNER_TEMP:?}/existing-release-assets"
+          install -d -m 0700 "$existing_dir"
+          for asset in "${release_assets[@]}"; do
+            asset_name="${asset##*/}"
+            expected_digest="$(jq -er --arg name "$asset_name" \
+              '.[$name].digest' <<<"$snapshot_result")"
+            asset_count="$(jq --arg name "$asset_name" \
+              '[.[] | select(.name == $name)] | length' <<<"$existing_json")"
+            if [ "$asset_count" -eq 1 ]; then
+              asset_id="$(jq -er --arg name "$asset_name" \
+                '[.[] | select(.name == $name)][0].id' <<<"$existing_json")"
+              test "$(jq -er --arg name "$asset_name" \
+                '[.[] | select(.name == $name)][0].digest' <<<"$existing_json")" = \
+                "$expected_digest"
+              gh api \
+                -H 'Accept: application/octet-stream' \
+                "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+                >"$existing_dir/$asset_name"
+              cmp -- "$asset" "$existing_dir/$asset_name"
+            elif [ "$asset_count" -eq 0 ] && [ "$release_mode" = draft ]; then
+              upload_result="$(curl \
+                --fail-with-body \
+                --request POST \
+                --silent \
+                --show-error \
+                --header 'Accept: application/vnd.github+json' \
+                --header 'Content-Type: application/octet-stream' \
+                --header 'X-GitHub-Api-Version: 2026-03-10' \
+                --header "Authorization: Bearer ${GH_TOKEN}" \
+                --data-binary "@${asset}" \
+                --write-out $'\n%{http_code}' \
+                "${upload_base}?name=${asset_name}")"
+              http_code="${upload_result##*$'\n'}"
+              upload_response="${upload_result%$'\n'*}"
+              test "$http_code" = 201
+              jq -e \
+                --arg name "$asset_name" \
+                --arg uploader "$APP_BOT_LOGIN" '
+                  .name == $name
+                  and .state == "uploaded"
+                  and .uploader.login == $uploader
+                  and (.id | type == "number" and . > 0)
+                ' <<<"$upload_response" >/dev/null
+            else
+              echo "ERROR: missing or ambiguous immutable release asset ${asset_name}." >&2
+              exit 1
+            fi
+          done
+          final_pages="$(gh api --paginate --slurp \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100")"
+          final_json="$(jq -ce '[.[][]]' <<<"$final_pages")"
+          jq -e \
+            --arg api_prefix "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/" \
+            --arg download_prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG_INPUT}/" \
+            --arg uploader "$APP_BOT_LOGIN" \
+            --argjson expected "$expected_names_json" '
+              ([.[].name] | sort) == $expected
+              and ([.[].id] | length) == ([.[].id] | unique | length)
+              and all(.[];
+                (.id | type == "number" and . > 0)
+                and .state == "uploaded"
+                and (.size | type == "number" and . > 0)
+                and (.digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+                and .uploader.login == $uploader
+                and .url == ($api_prefix + (.id | tostring))
+                and .browser_download_url == ($download_prefix + .name)
+              )
+            ' <<<"$final_json" >/dev/null
+          verified_dir="${RUNNER_TEMP:?}/verified-draft-release-assets"
+          install -d -m 0700 "$verified_dir"
+          for asset in "${release_assets[@]}"; do
+            asset_name="${asset##*/}"
+            expected_digest="sha256:$(sha256sum "$asset" | awk '{print $1}')"
+            asset_id="$(jq -er --arg name "$asset_name" '
+              [.[] | select(.name == $name)]
+              | if length == 1 then .[0].id else error("asset missing or ambiguous") end
+            ' <<<"$final_json")"
+            test "$(jq -er --arg name "$asset_name" \
+              '[.[] | select(.name == $name)][0].digest' <<<"$final_json")" = \
+              "$expected_digest"
+            gh api \
+              -H 'Accept: application/octet-stream' \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+              >"$verified_dir/$asset_name"
+            cmp -- "$asset" "$verified_dir/$asset_name"
+          done
+          prepublish_release_assets="$(jq -Sce '[.[] | {
+            id,
+            name,
+            size,
+            digest,
+            state,
+            url,
+            browser_download_url,
+            uploader: .uploader.login
+          }] | sort_by(.name)' <<<"$final_json")"
+          asset_inventory_b64="$(printf '%s' "$prepublish_release_assets" \
+            | base64 | tr -d '\n')"
+          {
+            echo "asset_inventory_b64=$asset_inventory_b64"
+            echo "release_mode=$release_mode"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Publish verified draft and require immutable release
+        id: immutable-release
+        shell: bash
+        env:
+          APP_BOT_LOGIN: ${{ steps.release-bot.outputs.login }}
+          CONSUMER_MERGE_SHA: ${{ needs.build.outputs.release_sha }}
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          PRODUCER_TOKEN: ${{ steps.producer-app.outputs.token }}
+          RELEASE_BODY_SHA256: ${{ needs.build.outputs.release_body_sha256 }}
+          RELEASE_ID: ${{ needs.build.outputs.release_id }}
+          RELEASE_MODE: ${{ steps.release-assets.outputs.release_mode }}
+          RELEASE_TAG_INPUT: ${{ needs.build.outputs.release_tag }}
+          SECURITY_RELEASE: ${{ needs.build.outputs.security_release }}
+          PREPUBLISH_RELEASE_ASSETS_B64: ${{ steps.release-assets.outputs.asset_inventory_b64 }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_BODY_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          prepublish_release_assets="$(printf '%s' \
+            "$PREPUBLISH_RELEASE_ASSETS_B64" | base64 --decode)"
+          jq -e 'type == "array" and length > 0' \
+            <<<"$prepublish_release_assets" >/dev/null
+          boundary_blob="$(git rev-parse \
+            "${CONSUMER_MERGE_SHA}:scripts/validate-semantic-release-boundary.sh")"
+          boundary_script="$(mktemp \
+            "${RUNNER_TEMP:?}/validate-semantic-release-boundary.XXXXXX")"
+          (umask 077 && git cat-file blob "$boundary_blob" >"$boundary_script")
+          chmod 0500 "$boundary_script"
+          bash "$boundary_script" "$CONSUMER_MERGE_SHA"
+          if [ "$SECURITY_RELEASE" = true ]; then
+            [[ "$CONSUMER_MERGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+            receipt_blob="$(git rev-parse \
+              "${CONSUMER_MERGE_SHA}:.lit/security-release-receipt.json")"
+            [[ "$receipt_blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+            test "$(git cat-file -t "$receipt_blob")" = blob
+            receipt_json="$(git cat-file blob "$receipt_blob")"
+            jq -e 'type == "object"' <<<"$receipt_json" >/dev/null
+            release_receipt="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/contents/.lit/security-release-receipt.json?ref=${CONSUMER_MERGE_SHA}")"
+            test "$(jq -er .sha <<<"$release_receipt")" = "$receipt_blob"
+            evidence_id="$(jq -er '.evidenceId' <<<"$receipt_json")"
+            evidence_url="$(jq -er '.evidenceUrl' <<<"$receipt_json")"
+            [[ "$evidence_id" =~ ^[A-Z0-9][A-Z0-9._-]{2,127}$ ]]
+            producer_prefix="https://github.com/lightning-it/ansible-collection-supplementary/releases/download/"
+            producer_remainder="${evidence_url#"$producer_prefix"}"
+            producer_tag="${producer_remainder%%/*}"
+            test "$evidence_url" = \
+              "${producer_prefix}${producer_tag}/security-release-evidence.json"
+            [[ "$producer_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+            producer_release="$(GH_TOKEN="$PRODUCER_TOKEN" gh api \
+              "repos/lightning-it/ansible-collection-supplementary/releases/tags/${producer_tag}")"
+            jq -e --arg tag "$producer_tag" '
+              .tag_name == $tag
+              and .draft == false
+              and .prerelease == false
+              and (.id | type == "number" and . > 0)
+            ' <<<"$producer_release" >/dev/null
+            producer_release_id="$(jq -er .id <<<"$producer_release")"
+            producer_asset_pages="$(GH_TOKEN="$PRODUCER_TOKEN" gh api --paginate --slurp \
+              "repos/lightning-it/ansible-collection-supplementary/releases/${producer_release_id}/assets?per_page=100")"
+            producer_assets="$(jq -ce '[.[][]]' <<<"$producer_asset_pages")"
+            revocation_count="$(jq --arg id "$evidence_id" '[.[].name | select(
+              . == "security-release-revocation.json"
+              or . == ("security-release-revocation-" + $id + ".json")
+            )] | length' <<<"$producer_assets")"
+            test "$revocation_count" -eq 0
+          fi
+          test "$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG_INPUT}" --jq .sha)" = \
+            "$CONSUMER_MERGE_SHA"
+          current_assets_pages="$(gh api --paginate --slurp \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100")"
+          current_assets="$(jq -Sce '[.[][] | {
+            id,
+            name,
+            size,
+            digest,
+            state,
+            url,
+            browser_download_url,
+            uploader: .uploader.login
+          }] | sort_by(.name)' <<<"$current_assets_pages")"
+          test "$current_assets" = \
+            "$prepublish_release_assets"
+          remote_source_dir="$(mktemp -d \
+            "${RUNNER_TEMP:?}/mlx90-prepublish-remote-assets.XXXXXX")"
+          chmod 0700 "$remote_source_dir"
+          while IFS=$'\t' read -r asset_id asset_name; do
+            [[ "$asset_id" =~ ^[1-9][0-9]*$ ]]
+            [[ "$asset_name" =~ ^[A-Za-z0-9._-]+$ ]]
+            gh api \
+              -H 'Accept: application/octet-stream' \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+              >"${remote_source_dir}/${asset_name}"
+          done < <(jq -r '.[] | [.id, .name] | @tsv' \
+            <<<"$prepublish_release_assets")
+          tool_dir="$(mktemp -d \
+            "${RUNNER_TEMP:?}/mlx90-prepublish-tools.XXXXXX")"
+          chmod 0700 "$tool_dir"
+          for tool in mlx90_snapshot_set.py mlx90_secure_files.py; do
+            tool_blob="$(git rev-parse \
+              "${CONSUMER_MERGE_SHA}:scripts/${tool}")"
+            [[ "$tool_blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+            (umask 077 && git cat-file blob "$tool_blob" >"${tool_dir}/${tool}")
+            chmod 0500 "${tool_dir}/${tool}"
+          done
+          remote_snapshot_dir="$(mktemp -d \
+            "${RUNNER_TEMP:?}/mlx90-prepublish-snapshots.XXXXXX")"
+          chmod 0700 "$remote_snapshot_dir"
+          snapshot_args=()
+          while IFS= read -r asset_name; do
+            snapshot_args+=(--file "${asset_name}:67108864")
+          done < <(jq -r '.[].name' <<<"$prepublish_release_assets")
+          PYTHONPATH="$tool_dir" python3 "${tool_dir}/mlx90_snapshot_set.py" \
+            --source "$remote_source_dir" \
+            --output "$remote_snapshot_dir" \
+            "${snapshot_args[@]}" >/dev/null
+          expected_signed_names="$(jq -r '.[].name' \
+            <<<"$prepublish_release_assets" | sort -u \
+            | sed '/^SHA256SUMS$/d;/^SHA256SUMS.sigstore.json$/d')"
+          signed_names="$(sed -nE \
+            's/^[0-9a-f]{64} [ *]([A-Za-z0-9][A-Za-z0-9._-]{0,127})$/\1/p' \
+            "${remote_snapshot_dir}/SHA256SUMS" | sort -u)"
+          test "$signed_names" = "$expected_signed_names"
+          test "$(wc -l <"${remote_snapshot_dir}/SHA256SUMS" \
+            | tr -d '[:space:]')" = \
+            "$(wc -l <<<"$expected_signed_names" | tr -d '[:space:]')"
+          cosign verify-blob \
+            --bundle "${remote_snapshot_dir}/SHA256SUMS.sigstore.json" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/container-build-publish.yml@refs/tags/${RELEASE_TAG_INPUT}" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-github-workflow-sha "$CONSUMER_MERGE_SHA" \
+            "${remote_snapshot_dir}/SHA256SUMS"
+          (cd "$remote_snapshot_dir" && sha256sum --check --strict SHA256SUMS)
+          if [ "$SECURITY_RELEASE" = true ]; then
+            cosign verify-blob \
+              --bundle "${remote_snapshot_dir}/mlx90-container-evidence.json.sigstore.json" \
+              --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/container-build-publish.yml@refs/tags/${RELEASE_TAG_INPUT}" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --certificate-github-workflow-sha "$CONSUMER_MERGE_SHA" \
+              "${remote_snapshot_dir}/mlx90-container-evidence.json"
+            expected_container_evidence_digest="sha256:$(awk '
+              $2 == "mlx90-container-evidence.json" { print $1 }
+            ' "${remote_snapshot_dir}/SHA256SUMS")"
+            [[ "$expected_container_evidence_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            security_evidence_capture="$(PYTHONPATH="$tool_dir" python3 \
+              "${tool_dir}/mlx90_secure_files.py" capture \
+              --source "${remote_snapshot_dir}/mlx90-container-evidence.json" \
+              --max-bytes 16777216 \
+              --label 'authenticated container evidence')"
+            test "$(jq -er '.digest' <<<"$security_evidence_capture")" = \
+              "$expected_container_evidence_digest"
+            security_evidence_json="$(jq -er '.payloadBase64' \
+              <<<"$security_evidence_capture" | base64 --decode)"
+          fi
+          release="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")"
+          test "$(jq -er .name <<<"$release")" = "$RELEASE_TAG_INPUT"
+          release_body="$(jq -jr '.body | select(type == "string")' <<<"$release")"
+          actual_body_sha256="$(
+            printf '%s' "$release_body" | sha256sum | awk '{print $1}'
+          )"
+          test "$actual_body_sha256" = "$RELEASE_BODY_SHA256"
+          if [ "$RELEASE_MODE" = draft ]; then
+            jq -e \
+              --arg author "$APP_BOT_LOGIN" \
+              --arg sha "$CONSUMER_MERGE_SHA" \
+              --arg tag "$RELEASE_TAG_INPUT" \
+              --argjson release_id "$RELEASE_ID" '
+                .id == $release_id
+                and .tag_name == $tag
+                and .target_commitish == $sha
+                and .name == $tag
+                and .draft == true
+                and .prerelease == false
+                and .immutable == false
+                and .published_at == null
+                and .author.login == $author
+              ' <<<"$release" >/dev/null
+            mutation_asset_pages="$(gh api --paginate --slurp \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100")"
+            mutation_assets="$(jq -Sce '[.[][] | {
+              id,
+              name,
+              size,
+              digest,
+              state,
+              url,
+              browser_download_url,
+              uploader: .uploader.login
+            }] | sort_by(.name)' <<<"$mutation_asset_pages")"
+            test "$mutation_assets" = \
+              "$prepublish_release_assets"
+            test "$(gh api \
+              "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG_INPUT}" --jq .sha)" = \
+              "$CONSUMER_MERGE_SHA"
+            publish_payload="$(jq -nc \
+              --arg body "$release_body" \
+              --arg sha "$CONSUMER_MERGE_SHA" \
+              --arg tag "$RELEASE_TAG_INPUT" '
+                {
+                  tag_name: $tag,
+                  target_commitish: $sha,
+                  name: $tag,
+                  body: $body,
+                  draft: false,
+                  prerelease: false,
+                  make_latest: "false"
+                }
+              ')"
+            publish_response="$(gh api \
+              --method PATCH \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              --input - \
+              <<<"$publish_payload" \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")"
+            jq -e \
+              --arg author "$APP_BOT_LOGIN" \
+              --arg body "$release_body" \
+              --arg sha "$CONSUMER_MERGE_SHA" \
+              --arg tag "$RELEASE_TAG_INPUT" \
+              --argjson release_id "$RELEASE_ID" '
+                .id == $release_id
+                and .tag_name == $tag
+                and .target_commitish == $sha
+                and .name == $tag
+                and .body == $body
+                and .draft == false
+                and .prerelease == false
+                and (.immutable | type == "boolean")
+                and (.published_at | type == "string" and length > 0)
+                and .author.login == $author
+              ' <<<"$publish_response" >/dev/null
+            publish_body_sha256="$(
+              jq -jr '.body | select(type == "string")' <<<"$publish_response" \
+                | sha256sum | awk '{print $1}'
+            )"
+            test "$publish_body_sha256" = "$RELEASE_BODY_SHA256"
+          else
+            test "$RELEASE_MODE" = published
+          fi
+          immutable_release=
+          for attempt in {1..20}; do
+            candidate="$(gh api \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")"
+            jq -e \
+              --arg author "$APP_BOT_LOGIN" \
+              --arg sha "$CONSUMER_MERGE_SHA" \
+              --arg tag "$RELEASE_TAG_INPUT" \
+              --argjson release_id "$RELEASE_ID" '
+                .id == $release_id
+                and .tag_name == $tag
+                and .target_commitish == $sha
+                and .name == $tag
+                and .draft == false
+                and .prerelease == false
+                and (.immutable | type == "boolean")
+                and (.published_at | type == "string" and length > 0)
+                and .author.login == $author
+              ' <<<"$candidate" >/dev/null
+            candidate_body_sha256="$(
+              jq -jr '.body | select(type == "string")' <<<"$candidate" \
+                | sha256sum | awk '{print $1}'
+            )"
+            test "$candidate_body_sha256" = "$RELEASE_BODY_SHA256"
+            candidate_asset_pages="$(gh api --paginate --slurp \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?per_page=100")"
+            candidate_asset_list="$(jq -ce '[.[][]]' <<<"$candidate_asset_pages")"
+            candidate_assets="$(jq -Sce '[.[][] | {
+              id,
+              name,
+              size,
+              digest,
+              state,
+              url,
+              browser_download_url,
+              uploader: .uploader.login
+            }] | sort_by(.name)' <<<"$candidate_asset_pages")"
+            test "$candidate_assets" = \
+              "$prepublish_release_assets"
+            if [ "$(jq -r .immutable <<<"$candidate")" = true ]; then
+              immutable_release="$candidate"
+              break
+            fi
+            if [ "$attempt" -eq 20 ]; then
+              exit 1
+            fi
+            sleep 3
+          done
+          test -n "$immutable_release"
+          by_tag="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG_INPUT}")"
+          test "$(jq -er .id <<<"$by_tag")" = "$RELEASE_ID"
+          test "$(jq -er .name <<<"$by_tag")" = "$RELEASE_TAG_INPUT"
+          test "$(jq -er .immutable <<<"$by_tag")" = true
+          test "$(jq -er .target_commitish <<<"$by_tag")" = "$CONSUMER_MERGE_SHA"
+          by_tag_body_sha256="$(
+            jq -jr '.body | select(type == "string")' <<<"$by_tag" \
+              | sha256sum | awk '{print $1}'
+          )"
+          test "$by_tag_body_sha256" = "$RELEASE_BODY_SHA256"
+          test "$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG_INPUT}" --jq .sha)" = \
+            "$CONSUMER_MERGE_SHA"
+          postpublish_dir="${RUNNER_TEMP:?}/verified-immutable-release-assets"
+          install -d -m 0700 "$postpublish_dir"
+          for asset in "$remote_snapshot_dir"/*; do
+            case "${asset##*/}" in
+              release-evidence.json|release-evidence.md|release-provenance.intoto.jsonl|assurance-public.json|assurance-certified.json|assurance-bootstrap.json|manifest-public.json|manifest-certified.json|manifest-bootstrap.json|signature-public.json|signature-certified.json|signature-bootstrap.json|sbom.cdx.json|sbom-public.cdx.json|sbom-certified.cdx.json|sbom-bootstrap.cdx.json|installed-collections-public.json|installed-collections-certified.json|installed-collections-bootstrap.json|mlx90-container-evidence.json|mlx90-container-evidence.json.sigstore.json|SHA256SUMS|SHA256SUMS.sigstore.json)
+                asset_name="${asset##*/}"
+                asset_id="$(jq -er --arg name "$asset_name" '
+                  [.[] | select(.name == $name)]
+                  | if length == 1 then .[0].id else error("asset missing or ambiguous") end
+                ' <<<"$candidate_asset_list")"
+                gh api \
+                  -H 'Accept: application/octet-stream' \
+                  "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+                  >"$postpublish_dir/$asset_name"
+                cmp -- "$asset" "$postpublish_dir/$asset_name"
+                ;;
+            esac
+          done
+          if [ "$SECURITY_RELEASE" = true ]; then
+            jq -e \
+              --arg sha "$CONSUMER_MERGE_SHA" \
+              --arg tag "$RELEASE_TAG_INPUT" \
+              --argjson release_id "$RELEASE_ID" '
+                .release.id == $release_id
+                and .release.tag == $tag
+                and .release.sourceSha == $sha
+                and (.release.workflowRunId | type == "number" and . > 0)
+                and (.release.workflowRunAttempt | type == "number" and . > 0)
+              ' <<<"$security_evidence_json" >/dev/null
+            evidence_run_id="$(jq -er '.release.workflowRunId' \
+              <<<"$security_evidence_json")"
+            evidence_run_attempt="$(jq -er '.release.workflowRunAttempt' \
+              <<<"$security_evidence_json")"
+            test "$evidence_run_id" = "$GITHUB_RUN_ID"
+            test "$evidence_run_attempt" -le "$GITHUB_RUN_ATTEMPT"
+            echo "evidence_run_id=$evidence_run_id" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Buildx for post-release stable promotion
+        if: needs.build.outputs.security_release != 'true'
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4
+        with:
+          driver-opts: image=docker.io/moby/buildkit:buildx-stable-1@sha256:63db51c9b30208a7c2b1c40392c7ebb9ce2f85ba238a18a85420f8f5ea2d4684
+
+      - name: Log in to Quay.io for post-release stable promotion
+        if: needs.build.outputs.security_release != 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Promote stable convenience tags after immutable publication
+        if: needs.build.outputs.security_release != 'true'
+        shell: bash
+        env:
+          BOOTSTRAP_DIGEST: ${{ needs.build.outputs.bootstrap_digest }}
+          CERTIFIED_DIGEST: ${{ needs.build.outputs.certified_digest }}
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          PUBLIC_DIGEST: ${{ needs.build.outputs.public_digest }}
+          QUAY_NAMESPACE: ${{ vars.QUAY_NAMESPACE }}
+          RELEASE_ID: ${{ needs.build.outputs.release_id }}
+          RELEASE_SHA: ${{ needs.build.outputs.release_sha }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          image_repo="${GITHUB_REPOSITORY#*/container-}"
+          image_public="quay.io/${QUAY_NAMESPACE}/${image_repo}"
+          image_certified="${image_public}-certified"
+          image_bootstrap="${image_public}-bootstrap"
+          python3 scripts/promote-container-latest.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --release-id "$RELEASE_ID" \
+            --release-tag "$RELEASE_TAG" \
+            --source-sha "$RELEASE_SHA" \
+            --variant "$image_public=$PUBLIC_DIGEST" \
+            --variant "$image_certified=$CERTIFIED_DIGEST" \
+            --variant "$image_bootstrap=$BOOTSTRAP_DIGEST"
+
+      - name: Dispatch immutable final acceptance
+        if: needs.build.outputs.security_release == 'true'
+        shell: bash
+        env:
+          CONSUMER_MERGE_SHA: ${{ needs.build.outputs.release_sha }}
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          RELEASE_BODY_SHA256: ${{ needs.build.outputs.release_body_sha256 }}
+          RELEASE_ID: ${{ needs.build.outputs.release_id }}
+          RELEASE_TAG_INPUT: ${{ needs.build.outputs.release_tag }}
+          EVIDENCE_RUN_ID: ${{ steps.immutable-release.outputs.evidence_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_BODY_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$EVIDENCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          test "$EVIDENCE_RUN_ID" = "$GITHUB_RUN_ID"
+          gh workflow run security-release-finalize.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f consumer_merge_sha="$CONSUMER_MERGE_SHA" \
+            -f release_body_sha256="$RELEASE_BODY_SHA256" \
+            -f container_release_id="$RELEASE_ID" \
+            -f container_release_tag="$RELEASE_TAG_INPUT" \
+            -f container_release_run_id="$EVIDENCE_RUN_ID" \
+            -f container_publish_run_attempt="$GITHUB_RUN_ATTEMPT"

@@ -1,0 +1,969 @@
+# yamllint disable rule:truthy rule:line-length
+---
+name: MLX-90 verify accepted release digests after delivery
+
+on:
+  workflow_dispatch:
+    inputs:
+      final_acceptance_url:
+        description: Immutable modulix-validation final-acceptance asset URL
+        required: true
+        type: string
+      final_acceptance_sha256:
+        description: Immutable sha256 digest including the sha256 prefix
+        required: true
+        type: string
+      consumer_merge_sha:
+        description: Exact accepted consumer merge SHA
+        required: true
+        type: string
+      container_release_tag:
+        description: Exact accepted v-prefixed container release tag
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mlx90-promote-tags-${{ inputs.container_release_tag }}
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Authenticate delivered evidence
+    if: >-
+      github.actor == 'lightning-it-release-automation[bot]'
+      && github.repository == 'lightning-it/container-ee-wunder-ansible-ubi9'
+      && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      evidence_id: ${{ steps.acceptance.outputs.evidence_id }}
+      producer_evidence_url: ${{ steps.acceptance.outputs.producer_evidence_url }}
+      producer_evidence_digest: ${{ steps.acceptance.outputs.producer_evidence_digest }}
+      producer_source_sha: ${{ steps.acceptance.outputs.producer_source_sha }}
+      producer_version: ${{ steps.acceptance.outputs.producer_version }}
+      consumer_base_sha: ${{ steps.acceptance.outputs.consumer_base_sha }}
+      consumer_head_sha: ${{ steps.acceptance.outputs.consumer_head_sha }}
+      consumer_merge_sha: ${{ steps.acceptance.outputs.consumer_merge_sha }}
+      consumer_pull_request: ${{ steps.acceptance.outputs.consumer_pull_request }}
+      container_release_id: ${{ steps.acceptance.outputs.container_release_id }}
+      container_release_tag: ${{ steps.acceptance.outputs.container_release_tag }}
+      finalizer_run_attempt: ${{ steps.acceptance.outputs.finalizer_run_attempt }}
+      finalizer_run_id: ${{ steps.acceptance.outputs.finalizer_run_id }}
+      finalizer_run_url: ${{ steps.acceptance.outputs.finalizer_run_url }}
+      public_image: ${{ steps.acceptance.outputs.public_image }}
+      public_digest: ${{ steps.acceptance.outputs.public_digest }}
+      certified_image: ${{ steps.acceptance.outputs.certified_image }}
+      certified_digest: ${{ steps.acceptance.outputs.certified_digest }}
+      bootstrap_image: ${{ steps.acceptance.outputs.bootstrap_image }}
+      bootstrap_digest: ${{ steps.acceptance.outputs.bootstrap_digest }}
+
+    steps:
+      - name: Validate immutable callback inputs
+        env:
+          ACCEPTANCE_DIGEST: ${{ inputs.final_acceptance_sha256 }}
+          ACCEPTANCE_URL: ${{ inputs.final_acceptance_url }}
+          CONSUMER_MERGE_SHA: ${{ inputs.consumer_merge_sha }}
+          CONTAINER_RELEASE_TAG: ${{ inputs.container_release_tag }}
+        run: |
+          set -euo pipefail
+          [[ "$ACCEPTANCE_URL" =~ ^https://github\.com/lightning-it/modulix-validation/releases/download/v0\.0\.0-mlx90\.[0-9a-f]{16}/mlx90-final-acceptance\.json$ ]]
+          [[ "$ACCEPTANCE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$CONSUMER_MERGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CONTAINER_RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+
+      - name: Checkout exact protected-main promotion policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Materialize exact protected-main acceptance tools
+        id: acceptance-tools
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RUN_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$RUN_SHA"
+          object_format="$(git rev-parse --show-object-format)"
+          case "$object_format" in
+            sha1) oid_pattern='^[0-9a-f]{40}$' ;;
+            sha256) oid_pattern='^[0-9a-f]{64}$' ;;
+            *) echo "unsupported Git object format: $object_format" >&2; exit 1 ;;
+          esac
+          live_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
+            --jq .object.sha)"
+          test "$live_main" = "$RUN_SHA"
+          tool_root="$(mktemp -d "${RUNNER_TEMP:?}/mlx90-acceptance-tools.XXXXXX")"
+          chmod 0700 "$tool_root"
+          while IFS='|' read -r source_path snapshot_name output_name expected_mode; do
+            entry="$(git ls-tree "$RUN_SHA" -- "$source_path")"
+            test -n "$entry"
+            test "${entry//$'\n'/}" = "$entry"
+            metadata="${entry%%$'\t'*}"
+            actual_path="${entry#*$'\t'}"
+            read -r mode type oid <<<"$metadata"
+            test "$mode" = "$expected_mode"
+            test "$type" = blob
+            test "$actual_path" = "$source_path"
+            [[ "$oid" =~ $oid_pattern ]]
+            test "$(git rev-parse "${RUN_SHA}:${source_path}")" = "$oid"
+            snapshot_path="${tool_root}/${snapshot_name}"
+            git cat-file blob "$oid" \
+              | (umask 077 && dd of="$snapshot_path" bs=65536 status=none oflag=excl)
+            chmod 0400 "$snapshot_path"
+            test "$(git hash-object --no-filters "$snapshot_path")" = "$oid"
+            {
+              echo "${output_name}_path=$snapshot_path"
+              echo "${output_name}_oid=$oid"
+            } >>"$GITHUB_OUTPUT"
+          done <<'EOF'
+          scripts/promote-mlx90-convenience-tags.py|promote-mlx90-convenience-tags.py|validator|100755
+          scripts/mlx90_secure_files.py|mlx90_secure_files.py|secure_files|100644
+          EOF
+          echo "object_format=$object_format" >>"$GITHUB_OUTPUT"
+
+      - name: Mint read-only final-acceptance evidence token
+        id: acceptance-app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: modulix-validation
+          permission-contents: read
+
+      - name: Verify exact final-acceptance evidence App scope
+        env:
+          APP_INSTALLATION_ID: ${{ steps.acceptance-app.outputs.installation-id }}
+          APP_SLUG: ${{ steps.acceptance-app.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.acceptance-app.outputs.token }}
+          OBJECT_FORMAT: ${{ steps.acceptance-tools.outputs.object_format }}
+        run: |
+          set -euo pipefail
+          test "$APP_SLUG" = "lightning-it-release-automation"
+          test "$APP_INSTALLATION_ID" = "148019054"
+          actual_repositories="$(
+            gh api --paginate "installation/repositories?per_page=100" \
+              | jq -sc '[.[].repositories[].full_name] | sort | unique'
+          )"
+          test "$actual_repositories" = '["lightning-it/modulix-validation"]'
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+
+      - name: Download and verify the durable final acceptance
+        id: acceptance
+        env:
+          ACCEPTANCE_DIGEST: ${{ inputs.final_acceptance_sha256 }}
+          ACCEPTANCE_URL: ${{ inputs.final_acceptance_url }}
+          CONSUMER_MERGE_SHA: ${{ inputs.consumer_merge_sha }}
+          CONTAINER_RELEASE_TAG: ${{ inputs.container_release_tag }}
+          GH_TOKEN: ${{ steps.acceptance-app.outputs.token }}
+          QUAY_NAMESPACE: ${{ vars.QUAY_NAMESPACE }}
+          SECURE_FILES_OID: ${{ steps.acceptance-tools.outputs.secure_files_oid }}
+          SECURE_FILES_PATH: ${{ steps.acceptance-tools.outputs.secure_files_path }}
+          VALIDATOR_OID: ${{ steps.acceptance-tools.outputs.validator_oid }}
+          VALIDATOR_PATH: ${{ steps.acceptance-tools.outputs.validator_path }}
+        run: |
+          set -euo pipefail
+          prefix="https://github.com/lightning-it/modulix-validation/releases/download/"
+          remainder="${ACCEPTANCE_URL#"$prefix"}"
+          tag="${remainder%%/*}"
+          test "$ACCEPTANCE_URL" = "${prefix}${tag}/mlx90-final-acceptance.json"
+          acceptance_hex="${ACCEPTANCE_DIGEST#sha256:}"
+          test "$tag" = "v0.0.0-mlx90.${acceptance_hex:0:16}"
+          evidence_dir="${RUNNER_TEMP:?}/mlx90-final-acceptance"
+          install -d -m 0700 "$evidence_dir"
+          release="$(gh api \
+            "repos/lightning-it/modulix-validation/releases/tags/${tag}")"
+          release_id="$(jq -er .id <<<"$release")"
+          [[ "$release_id" =~ ^[1-9][0-9]*$ ]]
+          finalizer_sha="$(gh api \
+            "repos/lightning-it/modulix-validation/commits/${tag}" --jq .sha)"
+          [[ "$finalizer_sha" =~ ^[0-9a-f]{40}$ ]]
+          jq -e \
+            --argjson release_id "$release_id" \
+            --arg sha "$finalizer_sha" \
+            --arg tag "$tag" '
+              .id == $release_id
+              and .draft == false
+              and .prerelease == false
+              and .immutable == true
+              and .tag_name == $tag
+              and .target_commitish == $sha
+              and (.published_at | type == "string" and length > 0)
+            ' <<<"$release" >/dev/null
+          release_by_id="$(gh api \
+            "repos/lightning-it/modulix-validation/releases/${release_id}")"
+          jq -e \
+            --argjson release_id "$release_id" \
+            --arg sha "$finalizer_sha" \
+            --arg tag "$tag" '
+              .id == $release_id
+              and .draft == false
+              and .prerelease == false
+              and .immutable == true
+              and .tag_name == $tag
+              and .target_commitish == $sha
+            ' <<<"$release_by_id" >/dev/null
+          asset_pages="$(gh api --paginate --slurp \
+            "repos/lightning-it/modulix-validation/releases/${release_id}/assets?per_page=100")"
+          assets="$(jq '[.[][]]' <<<"$asset_pages")"
+          jq -e --arg base "${prefix}${tag}/" '
+            type == "array"
+            and ([.[].name] | sort) == [
+              "SHA256SUMS",
+              "SHA256SUMS.sigstore.json",
+              "mlx90-final-acceptance.json",
+              "mlx90-verification-receipts.json",
+              "mlx90-verification-report.json",
+              "security-release-delivered.json"
+            ]
+            and all(.[];
+              .state == "uploaded"
+              and (.id | type == "number" and . > 0)
+              and (.size | type == "number" and . > 0 and . <= 10485760)
+              and .browser_download_url == ($base + .name)
+            )
+          ' <<<"$assets" >/dev/null
+          gh release download "$tag" \
+            --repo lightning-it/modulix-validation \
+            --dir "$evidence_dir" \
+            --pattern SHA256SUMS \
+            --pattern SHA256SUMS.sigstore.json \
+            --pattern mlx90-final-acceptance.json \
+            --pattern mlx90-verification-receipts.json \
+            --pattern mlx90-verification-report.json \
+            --pattern security-release-delivered.json
+          exec {validator_fd}<"$VALIDATOR_PATH"
+          exec {secure_files_fd}<"$SECURE_FILES_PATH"
+          promotion_result="$(
+            python3 - \
+              "$OBJECT_FORMAT" \
+              "$VALIDATOR_OID" \
+              "$SECURE_FILES_OID" \
+              --acceptance "$evidence_dir/mlx90-final-acceptance.json" \
+              --receipt-bundle "$evidence_dir/mlx90-verification-receipts.json" \
+              --checksums "$evidence_dir/SHA256SUMS" \
+              --checksums-bundle "$evidence_dir/SHA256SUMS.sigstore.json" \
+              --acceptance-digest "$ACCEPTANCE_DIGEST" \
+              --consumer-merge-sha "$CONSUMER_MERGE_SHA" \
+              --container-release-tag "$CONTAINER_RELEASE_TAG" \
+              --finalizer-sha "$finalizer_sha" \
+              --quay-namespace "$QUAY_NAMESPACE" \
+              3<&"$validator_fd" 4<&"$secure_files_fd" <<'PY'
+          import hashlib
+          import os
+          import re
+          import sys
+          import types
+
+          object_format = sys.argv[1]
+          oid_lengths = {"sha1": 40, "sha256": 64}
+          oid_length = oid_lengths.get(object_format)
+          if oid_length is None:
+              raise SystemExit("unsupported Git object format")
+
+          def exact_blob(descriptor, expected_oid, label):
+              if re.fullmatch(rf"[0-9a-f]{{{oid_length}}}", expected_oid) is None:
+                  raise SystemExit(f"invalid expected {label} Git blob OID")
+              payload = os.read(descriptor, 1048577)
+              if not payload or len(payload) > 1048576:
+                  raise SystemExit(f"invalid bounded {label} Git blob")
+              header = f"blob {len(payload)}\0".encode("ascii")
+              actual_oid = hashlib.new(object_format, header + payload).hexdigest()
+              if actual_oid != expected_oid:
+                  raise SystemExit(f"{label} Git blob changed before execution")
+              return payload
+
+          validator = exact_blob(3, sys.argv[2], "acceptance validator")
+          secure_files = exact_blob(4, sys.argv[3], "secure-files dependency")
+          secure_module = types.ModuleType("mlx90_secure_files")
+          secure_module.__file__ = "<trusted-mlx90-secure-files-blob>"
+          exec(
+              compile(
+                  secure_files,
+                  secure_module.__file__,
+                  "exec",
+              ),
+              secure_module.__dict__,
+          )
+          sys.modules[secure_module.__name__] = secure_module
+          sys.argv = ["<trusted-mlx90-acceptance-validator-blob>", *sys.argv[4:]]
+          scope = {
+              "__file__": sys.argv[0],
+              "__name__": "__main__",
+              "__package__": None,
+          }
+          exec(compile(validator, sys.argv[0], "exec"), scope)
+          PY
+          )"
+          exec {validator_fd}<&-
+          exec {secure_files_fd}<&-
+          jq -e -s \
+            --arg expected_container_tag "$CONTAINER_RELEASE_TAG" \
+            --arg expected_consumer_merge "$CONSUMER_MERGE_SHA" \
+            --arg expected_finalizer_sha "$finalizer_sha" '
+            length == 1
+            and (.[0] |
+              type == "object"
+              and keys == [
+                "consumerBaseSha", "consumerHeadSha", "consumerMergeSha",
+                "consumerPullRequest", "containerReleaseId", "containerReleaseTag",
+                "evidenceId", "finalAcceptanceVerified", "finalizerRunAttempt",
+                "finalizerRunId", "finalizerRunUrl", "finalizerSha",
+                "producerEvidenceDigest", "producerEvidenceUrl",
+                "producerSourceSha", "producerVersion", "variants"
+              ]
+              and (.consumerBaseSha | type == "string" and test("^[0-9a-f]{40}$"))
+              and (.consumerHeadSha | type == "string" and test("^[0-9a-f]{40}$"))
+              and .consumerMergeSha == $expected_consumer_merge
+              and (.consumerPullRequest | type == "number" and . > 0 and . == floor)
+              and (.containerReleaseId | type == "number" and . > 0 and . == floor)
+              and .containerReleaseTag == $expected_container_tag
+              and (.evidenceId | type == "string" and test("^[A-Z0-9][A-Z0-9._-]{2,127}$"))
+              and .finalAcceptanceVerified == true
+              and (.finalizerRunAttempt | type == "number" and . > 0 and . == floor)
+              and (.finalizerRunId | type == "number" and . > 0 and . == floor)
+              and .finalizerRunUrl == (
+                "https://github.com/lightning-it/modulix-validation/actions/runs/"
+                + (.finalizerRunId | tostring)
+              )
+              and .finalizerSha == $expected_finalizer_sha
+              and (.producerEvidenceDigest | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+              and (.producerEvidenceUrl | type == "string" and length > 0)
+              and (.producerSourceSha | type == "string" and test("^[0-9a-f]{40}$"))
+              and (.producerVersion | type == "string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"))
+              and (.variants |
+                type == "object"
+                and keys == ["bootstrap", "certified", "public"]
+                and all(.[];
+                  type == "object"
+                  and keys == ["digest", "image"]
+                  and (.digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+                  and (.image | type == "string" and test("^quay\\.io/[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$"))
+                )
+              )
+            )
+          ' <<<"$promotion_result" >/dev/null
+          (cd "$evidence_dir" && sha256sum --check --strict SHA256SUMS)
+          for field in \
+            evidenceId \
+            producerEvidenceUrl \
+            producerEvidenceDigest \
+            producerSourceSha \
+            producerVersion \
+            consumerBaseSha \
+            consumerHeadSha \
+            consumerMergeSha \
+            consumerPullRequest \
+            containerReleaseId \
+            containerReleaseTag \
+            finalizerRunAttempt \
+            finalizerRunId \
+            finalizerRunUrl; do
+            output_name="$(sed -E 's/([A-Z])/_\L\1/g' <<<"$field")"
+            value="$(jq -er -s --arg field "$field" '.[0][$field]' \
+              <<<"$promotion_result")"
+            echo "${output_name}=${value}" >>"$GITHUB_OUTPUT"
+          done
+          for variant in public certified bootstrap; do
+            image="$(jq -er -s --arg variant "$variant" \
+              '.[0].variants[$variant].image' <<<"$promotion_result")"
+            digest="$(jq -er -s --arg variant "$variant" \
+              '.[0].variants[$variant].digest' <<<"$promotion_result")"
+            {
+              echo "${variant}_image=$image"
+              echo "${variant}_digest=$digest"
+            } >>"$GITHUB_OUTPUT"
+          done
+
+  promote:
+    name: Verify accepted digests without mutable aliases
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: security-release-acceptance
+    concurrency:
+      group: container-release-digest-verification-${{ github.repository }}
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout exact dispatched promotion policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Bind digest verification policy to the exact live main head
+        id: promotion-tool
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$RUN_SHA" =~ ^[0-9a-f]{40}$ ]]
+          object_format="$(git rev-parse --show-object-format)"
+          case "$object_format" in
+            sha1) oid_pattern='^[0-9a-f]{40}$' ;;
+            sha256) oid_pattern='^[0-9a-f]{64}$' ;;
+            *) echo "unsupported Git object format: $object_format" >&2; exit 1 ;;
+          esac
+          live_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
+            --jq .object.sha)"
+          test "$live_main" = "$RUN_SHA"
+          tool_path=scripts/promote-container-latest.py
+          entry="$(git ls-tree "$RUN_SHA" -- "$tool_path")"
+          test -n "$entry"
+          test "${entry//$'\n'/}" = "$entry"
+          metadata="${entry%%$'\t'*}"
+          actual_path="${entry#*$'\t'}"
+          read -r mode type oid <<<"$metadata"
+          test "$mode" = 100755
+          test "$type" = blob
+          test "$actual_path" = "$tool_path"
+          [[ "$oid" =~ $oid_pattern ]]
+          test "$(git rev-parse "${RUN_SHA}:${tool_path}")" = "$oid"
+          tool_root="$(mktemp -d "${RUNNER_TEMP:?}/mlx90-promotion-tool.XXXXXX")"
+          chmod 0700 "$tool_root"
+          snapshot_path="${tool_root}/promote-container-latest.py"
+          git cat-file blob "$oid" \
+            | (umask 077 && dd of="$snapshot_path" bs=65536 status=none oflag=excl)
+          chmod 0400 "$snapshot_path"
+          test "$(git hash-object --no-filters "$snapshot_path")" = "$oid"
+          {
+            echo "path=$snapshot_path"
+            echo "oid=$oid"
+            echo "object_format=$object_format"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Mint exact read-only promotion policy token
+        id: promotion-policy-app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            ansible-collection-supplementary
+            container-ee-wunder-ansible-ubi9
+          permission-contents: read
+
+      - name: Verify exact promotion policy App scope
+        env:
+          APP_INSTALLATION_ID: ${{ steps.promotion-policy-app.outputs.installation-id }}
+          APP_SLUG: ${{ steps.promotion-policy-app.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.promotion-policy-app.outputs.token }}
+        run: |
+          set -euo pipefail
+          test "$APP_SLUG" = "lightning-it-release-automation"
+          test "$APP_INSTALLATION_ID" = "148019054"
+          actual_repositories="$(
+            gh api --paginate "installation/repositories?per_page=100" \
+              | jq -sc '[.[].repositories[].full_name] | sort | unique'
+          )"
+          test "$actual_repositories" = \
+            '["lightning-it/ansible-collection-supplementary","lightning-it/container-ee-wunder-ansible-ubi9"]'
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+
+      - name: Verify accepted immutable digests without tag mutation
+        env:
+          PUBLIC_IMAGE: ${{ needs.validate.outputs.public_image }}
+          PUBLIC_DIGEST: ${{ needs.validate.outputs.public_digest }}
+          CERTIFIED_IMAGE: ${{ needs.validate.outputs.certified_image }}
+          CERTIFIED_DIGEST: ${{ needs.validate.outputs.certified_digest }}
+          BOOTSTRAP_IMAGE: ${{ needs.validate.outputs.bootstrap_image }}
+          BOOTSTRAP_DIGEST: ${{ needs.validate.outputs.bootstrap_digest }}
+          CONSUMER_MERGE_SHA: ${{ needs.validate.outputs.consumer_merge_sha }}
+          CONSUMER_BASE_SHA: ${{ needs.validate.outputs.consumer_base_sha }}
+          CONTAINER_RELEASE_ID: ${{ needs.validate.outputs.container_release_id }}
+          CONTAINER_RELEASE_TAG: ${{ needs.validate.outputs.container_release_tag }}
+          EVIDENCE_ID: ${{ needs.validate.outputs.evidence_id }}
+          GH_TOKEN: ${{ steps.promotion-policy-app.outputs.token }}
+          PRODUCER_EVIDENCE_DIGEST: ${{ needs.validate.outputs.producer_evidence_digest }}
+          PRODUCER_EVIDENCE_URL: ${{ needs.validate.outputs.producer_evidence_url }}
+          PRODUCER_SOURCE_SHA: ${{ needs.validate.outputs.producer_source_sha }}
+          PRODUCER_VERSION: ${{ needs.validate.outputs.producer_version }}
+          PROMOTION_TOOL_OID: ${{ steps.promotion-tool.outputs.oid }}
+          PROMOTION_TOOL_PATH: ${{ steps.promotion-tool.outputs.path }}
+          PROMOTION_TOOL_OBJECT_FORMAT: ${{ steps.promotion-tool.outputs.object_format }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          entries=(
+            "$PUBLIC_IMAGE|$PUBLIC_DIGEST"
+            "$CERTIFIED_IMAGE|$CERTIFIED_DIGEST"
+            "$BOOTSTRAP_IMAGE|$BOOTSTRAP_DIGEST"
+          )
+          for entry in "${entries[@]}"; do
+            image="${entry%%|*}"
+            digest="${entry#*|}"
+            [[ "$image" =~ ^quay\.io/[^[:space:]@]+/[^[:space:]@]+$ ]]
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            cosign verify \
+              --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/container-build-publish.yml@refs/tags/${CONTAINER_RELEASE_TAG}" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --certificate-github-workflow-sha "$CONSUMER_MERGE_SHA" \
+              "${image}@${digest}" >/dev/null
+          done
+
+          live_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
+            --jq '.object.sha')"
+          [[ "$live_main" =~ ^[0-9a-f]{40}$ ]]
+          comparison="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/compare/${CONSUMER_MERGE_SHA}...${live_main}")"
+          jq -e --arg accepted "$CONSUMER_MERGE_SHA" '
+            (.status == "ahead" or .status == "identical")
+            and .behind_by == 0
+            and .merge_base_commit.sha == $accepted
+          ' <<<"$comparison" >/dev/null
+          accepted_receipt="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/contents/.lit/security-release-receipt.json?ref=${CONSUMER_MERGE_SHA}")"
+          live_receipt="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/contents/.lit/security-release-receipt.json?ref=${live_main}")"
+          jq -e '
+            .type == "file"
+            and .encoding == "base64"
+            and (.size | type == "number" and . > 0 and . <= 65536)
+            and (.sha | test("^[0-9a-f]{40}$"))
+          ' <<<"$accepted_receipt" >/dev/null
+          jq -e '
+            .type == "file"
+            and .encoding == "base64"
+            and (.size | type == "number" and . > 0 and . <= 65536)
+            and (.sha | test("^[0-9a-f]{40}$"))
+          ' <<<"$live_receipt" >/dev/null
+          receipt_blob="$(jq -er '.sha' <<<"$accepted_receipt")"
+          test "$(jq -er '.sha' <<<"$live_receipt")" = "$receipt_blob"
+          receipt_base64="$(jq -er '.content | gsub("\\s"; "")' \
+            <<<"$live_receipt")"
+          [[ "$receipt_base64" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]
+          decoded_receipt_oid="$(printf '%s' "$receipt_base64" \
+            | base64 --decode | git hash-object --stdin)"
+          test "$decoded_receipt_oid" = "$receipt_blob"
+          receipt_json="$(printf '%s' "$receipt_base64" | base64 --decode)"
+          jq -e \
+            --arg base "$CONSUMER_BASE_SHA" \
+            --arg consumer "$GITHUB_REPOSITORY" \
+            --arg digest "$PRODUCER_EVIDENCE_DIGEST" \
+            --arg id "$EVIDENCE_ID" \
+            --arg producer_sha "$PRODUCER_SOURCE_SHA" \
+            --arg url "$PRODUCER_EVIDENCE_URL" \
+            --arg version "$PRODUCER_VERSION" '
+              .schemaVersion == 1
+              and .baseSha == $base
+              and .consumerRepository == $consumer
+              and .evidenceDigest == $digest
+              and .evidenceId == $id
+              and .evidenceUrl == $url
+              and .producerRepository == "lightning-it/ansible-collection-supplementary"
+              and .producerSourceSha == $producer_sha
+              and .version == $version
+            ' <<<"$receipt_json" >/dev/null
+
+          mutation_main="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)"
+          test "$mutation_main" = "$RUN_SHA"
+          exec {promotion_fd}<"$PROMOTION_TOOL_PATH"
+          python3 - \
+            "$PROMOTION_TOOL_OBJECT_FORMAT" \
+            "$PROMOTION_TOOL_OID" \
+            --repository "$GITHUB_REPOSITORY" \
+            --release-id "$CONTAINER_RELEASE_ID" \
+            --release-tag "$CONTAINER_RELEASE_TAG" \
+            --source-sha "$CONSUMER_MERGE_SHA" \
+            --verify-digests-only \
+            --producer-repository lightning-it/ansible-collection-supplementary \
+            --producer-release-tag "v${PRODUCER_VERSION}" \
+            --producer-source-sha "$PRODUCER_SOURCE_SHA" \
+            --evidence-id "$EVIDENCE_ID" \
+            --variant "$PUBLIC_IMAGE=$PUBLIC_DIGEST" \
+            --variant "$CERTIFIED_IMAGE=$CERTIFIED_DIGEST" \
+            --variant "$BOOTSTRAP_IMAGE=$BOOTSTRAP_DIGEST" \
+            3<&"$promotion_fd" <<'PY'
+          import hashlib
+          import os
+          import re
+          import sys
+
+          object_format, expected_oid = sys.argv[1:3]
+          oid_lengths = {"sha1": 40, "sha256": 64}
+          oid_length = oid_lengths.get(object_format)
+          if oid_length is None:
+              raise SystemExit("unsupported Git object format")
+          if re.fullmatch(rf"[0-9a-f]{{{oid_length}}}", expected_oid) is None:
+              raise SystemExit("invalid expected promotion-tool Git blob OID")
+          payload = os.read(3, 1048577)
+          if not payload or len(payload) > 1048576:
+              raise SystemExit("invalid bounded promotion-tool Git blob")
+          header = f"blob {len(payload)}\0".encode("ascii")
+          actual_oid = hashlib.new(object_format, header + payload).hexdigest()
+          if actual_oid != expected_oid:
+              raise SystemExit("promotion-tool Git blob changed before execution")
+          sys.argv = ["<trusted-promote-container-latest-blob>", *sys.argv[3:]]
+          scope = {
+              "__file__": sys.argv[0],
+              "__name__": "__main__",
+              "__package__": None,
+          }
+          exec(compile(payload, sys.argv[0], "exec"), scope)
+          PY
+          exec {promotion_fd}<&-
+
+  cleanup-receipt:
+    name: Retire the consumed Security receipt through a protected PR
+    needs: [validate, promote]
+    runs-on: ubuntu-latest
+    environment: security-release-acceptance
+    permissions:
+      contents: read
+
+    steps:
+      - name: Resolve the exact live main head
+        id: main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
+            --jq .object.sha)"
+          [[ "$main_sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "sha=$main_sha" >>"$GITHUB_OUTPUT"
+
+      - name: Mint the least-privilege cleanup App token
+        id: release-app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: container-ee-wunder-ansible-ubi9
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Verify the exact cleanup App installation
+        id: release-bot
+        env:
+          APP_INSTALLATION_ID: ${{ steps.release-app.outputs.installation-id }}
+          APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+        run: |
+          set -euo pipefail
+          test "$APP_SLUG" = "lightning-it-release-automation"
+          test "$APP_INSTALLATION_ID" = "148019054"
+          actual_repositories="$(
+            gh api --paginate 'installation/repositories?per_page=100' \
+              | jq -sc '[.[].repositories[].full_name] | sort | unique'
+          )"
+          test "$actual_repositories" = \
+            '["lightning-it/container-ee-wunder-ansible-ubi9"]'
+          bot_json="$(gh api "users/${APP_SLUG}%5Bbot%5D")"
+          login="$(jq -r '.login // ""' <<<"$bot_json")"
+          bot_id="$(jq -r '.id // ""' <<<"$bot_json")"
+          test "$login" = 'lightning-it-release-automation[bot]'
+          [[ "$bot_id" =~ ^[0-9]+$ ]]
+          echo "login=$login" >>"$GITHUB_OUTPUT"
+          echo "email=${bot_id}+${login}@users.noreply.github.com" >>"$GITHUB_OUTPUT"
+
+      - name: Checkout the exact live main head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          ref: ${{ steps.main.outputs.sha }}
+          fetch-depth: 0
+          token: ${{ steps.release-app.outputs.token }}
+          persist-credentials: false
+
+      - name: Validate the active receipt against delivered evidence
+        id: receipt
+        env:
+          CONSUMER_BASE_SHA: ${{ needs.validate.outputs.consumer_base_sha }}
+          CONSUMER_MERGE_SHA: ${{ needs.validate.outputs.consumer_merge_sha }}
+          EVIDENCE_DIGEST: ${{ needs.validate.outputs.producer_evidence_digest }}
+          EVIDENCE_ID: ${{ needs.validate.outputs.evidence_id }}
+          EVIDENCE_URL: ${{ needs.validate.outputs.producer_evidence_url }}
+          MAIN_SHA: ${{ steps.main.outputs.sha }}
+          PRODUCER_VERSION: ${{ needs.validate.outputs.producer_version }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$MAIN_SHA"
+          git merge-base --is-ancestor "$CONSUMER_MERGE_SHA" "$MAIN_SHA"
+          test "$(git cat-file -t "$MAIN_SHA")" = commit
+          object_format="$(git rev-parse --show-object-format)"
+          case "$object_format" in
+            sha1) oid_pattern='^[0-9a-f]{40}$' ;;
+            sha256) oid_pattern='^[0-9a-f]{64}$' ;;
+            *) echo "unsupported Git object format: $object_format" >&2; exit 1 ;;
+          esac
+          main_tree="$(git rev-parse "${MAIN_SHA}^{tree}")"
+          [[ "$main_tree" =~ $oid_pattern ]]
+          test "$(git cat-file -t "$main_tree")" = tree
+          receipt_entry="$(git ls-tree "$MAIN_SHA" -- \
+            .lit/security-release-receipt.json)"
+          if [ -z "$receipt_entry" ]; then
+            {
+              echo "base_tree=$main_tree"
+              echo "receipt_blob="
+              echo "requirements_blob="
+              echo "required=false"
+            } >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          test "${receipt_entry//$'\n'/}" = "$receipt_entry"
+          receipt_metadata="${receipt_entry%%$'\t'*}"
+          receipt_path="${receipt_entry#*$'\t'}"
+          read -r receipt_mode receipt_type receipt_blob <<<"$receipt_metadata"
+          test "$receipt_mode" = 100644
+          test "$receipt_type" = blob
+          test "$receipt_path" = .lit/security-release-receipt.json
+          [[ "$receipt_blob" =~ $oid_pattern ]]
+          test "$(git cat-file -t "$receipt_blob")" = blob
+          test "$(git rev-parse \
+            "${MAIN_SHA}:.lit/security-release-receipt.json")" = "$receipt_blob"
+          requirements_entry="$(git ls-tree "$MAIN_SHA" -- \
+            collections/requirements-base.yml)"
+          test -n "$requirements_entry"
+          test "${requirements_entry//$'\n'/}" = "$requirements_entry"
+          requirements_metadata="${requirements_entry%%$'\t'*}"
+          requirements_path="${requirements_entry#*$'\t'}"
+          read -r requirements_mode requirements_type requirements_blob \
+            <<<"$requirements_metadata"
+          test "$requirements_mode" = 100644
+          test "$requirements_type" = blob
+          test "$requirements_path" = collections/requirements-base.yml
+          [[ "$requirements_blob" =~ $oid_pattern ]]
+          test "$(git cat-file -t "$requirements_blob")" = blob
+          test "$(git rev-parse \
+            "${MAIN_SHA}:collections/requirements-base.yml")" = "$requirements_blob"
+          receipt_json="$(git cat-file blob "$receipt_blob")"
+          jq -e \
+            --arg base "$CONSUMER_BASE_SHA" \
+            --arg digest "$EVIDENCE_DIGEST" \
+            --arg id "$EVIDENCE_ID" \
+            --arg url "$EVIDENCE_URL" \
+            --arg version "$PRODUCER_VERSION" '
+              (keys | sort) == ([
+                "baseSha", "collection", "collectionDigest", "consumerRepository",
+                "evidenceDigest", "evidenceId", "evidenceUrl", "producerRepository",
+                "producerSourceSha", "producerWorkflowRepository", "producerWorkflowSha",
+                "provenance", "sbom", "schemaVersion", "securityIdentifiers",
+                "signature", "version"
+              ] | sort)
+              and .schemaVersion == 1
+              and .evidenceId == $id
+              and .evidenceUrl == $url
+              and .evidenceDigest == $digest
+              and .baseSha == $base
+              and .version == $version
+              and .collection == "lit.supplementary"
+              and .producerRepository == "lightning-it/ansible-collection-supplementary"
+              and .producerWorkflowRepository == "lightning-it/ansible-collection-supplementary"
+              and .consumerRepository == "lightning-it/container-ee-wunder-ansible-ubi9"
+            ' <<<"$receipt_json" >/dev/null
+          parser_root="$(mktemp -d \
+            "${RUNNER_TEMP:?}/mlx90-requirements-parser.XXXXXX")"
+          chmod 0700 "$parser_root"
+          snapshot_blob() {
+            local source_path="$1" snapshot_name="$2" expected_mode="$3"
+            local entry metadata actual_path mode type oid snapshot_path
+            entry="$(git ls-tree "$MAIN_SHA" -- "$source_path")"
+            test -n "$entry"
+            test "${entry//$'\n'/}" = "$entry"
+            metadata="${entry%%$'\t'*}"
+            actual_path="${entry#*$'\t'}"
+            read -r mode type oid <<<"$metadata"
+            test "$mode" = "$expected_mode"
+            test "$type" = blob
+            test "$actual_path" = "$source_path"
+            [[ "$oid" =~ $oid_pattern ]]
+            test "$(git rev-parse "${MAIN_SHA}:${source_path}")" = "$oid"
+            snapshot_path="${parser_root}/${snapshot_name}"
+            git cat-file blob "$oid" \
+              | (umask 077 && dd of="$snapshot_path" bs=65536 status=none oflag=excl)
+            chmod 0400 "$snapshot_path"
+            test "$(git hash-object --no-filters "$snapshot_path")" = "$oid"
+            printf '%s|%s\n' "$oid" "$snapshot_path"
+          }
+          IFS='|' read -r consumer_oid consumer_path <<<"$(snapshot_blob \
+            scripts/security-release-consumer.py security-release-consumer.py 100755)"
+          IFS='|' read -r secure_files_oid secure_files_path <<<"$(snapshot_blob \
+            scripts/mlx90_secure_files.py mlx90_secure_files.py 100644)"
+          requirements_snapshot="${parser_root}/requirements-base.yml"
+          git cat-file blob "$requirements_blob" \
+            | (umask 077 && dd of="$requirements_snapshot" \
+                bs=65536 status=none oflag=excl)
+          chmod 0400 "$requirements_snapshot"
+          test "$(git hash-object --no-filters "$requirements_snapshot")" = \
+            "$requirements_blob"
+          requirements_version="$(
+            python3 - \
+              "$object_format" \
+              "$consumer_oid" "$consumer_path" \
+              "$secure_files_oid" "$secure_files_path" \
+              "$requirements_blob" "$requirements_snapshot" <<'PY'
+          import hashlib
+          import re
+          import sys
+          import types
+          from pathlib import Path
+
+          object_format = sys.argv[1]
+          oid_lengths = {"sha1": 40, "sha256": 64}
+          oid_length = oid_lengths.get(object_format)
+          if oid_length is None:
+              raise SystemExit("unsupported Git object format")
+
+          def exact_blob(expected_oid, path, label, max_bytes):
+              if re.fullmatch(rf"[0-9a-f]{{{oid_length}}}", expected_oid) is None:
+                  raise SystemExit(f"invalid expected {label} Git blob OID")
+              payload = Path(path).read_bytes()
+              if not payload or len(payload) > max_bytes:
+                  raise SystemExit(f"invalid bounded {label} Git blob")
+              header = f"blob {len(payload)}\0".encode("ascii")
+              actual_oid = hashlib.new(object_format, header + payload).hexdigest()
+              if actual_oid != expected_oid:
+                  raise SystemExit(f"{label} Git blob changed before execution")
+              return payload
+
+          consumer_payload = exact_blob(
+              sys.argv[2], sys.argv[3], "requirements parser", 4 * 1024 * 1024
+          )
+          secure_payload = exact_blob(
+              sys.argv[4], sys.argv[5], "secure-files dependency", 1024 * 1024
+          )
+          requirements_payload = exact_blob(
+              sys.argv[6], sys.argv[7], "collection requirements", 1024 * 1024
+          )
+          secure_module = types.ModuleType("mlx90_secure_files")
+          secure_module.__file__ = "<trusted-mlx90-secure-files-blob>"
+          exec(compile(secure_payload, secure_module.__file__, "exec"), secure_module.__dict__)
+          sys.modules[secure_module.__name__] = secure_module
+          consumer_module = types.ModuleType("security_release_consumer")
+          consumer_module.__file__ = "<trusted-security-release-consumer-blob>"
+          sys.modules[consumer_module.__name__] = consumer_module
+          exec(
+              compile(consumer_payload, consumer_module.__file__, "exec"),
+              consumer_module.__dict__,
+          )
+          try:
+              requirements_text = requirements_payload.decode("utf-8")
+          except UnicodeError as exc:
+              raise SystemExit("collection requirements must be UTF-8") from exc
+          print(consumer_module.requirement_version_text(requirements_text))
+          PY
+          )"
+          test "$requirements_version" = "$PRODUCER_VERSION"
+          branch_id="$(tr '[:upper:]' '[:lower:]' <<<"$EVIDENCE_ID" \
+            | tr -c 'a-z0-9._-' '-')"
+          branch_id="${branch_id%-}"
+          test -n "$branch_id"
+          {
+            echo "base_tree=$main_tree"
+            echo "branch=security/mlx90-cleanup-${branch_id}-${MAIN_SHA:0:12}"
+            echo "receipt_blob=$receipt_blob"
+            echo "requirements_blob=$requirements_blob"
+            echo "required=true"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Create or resume the exact receipt-cleanup pull request
+        if: steps.receipt.outputs.required == 'true'
+        env:
+          ACCEPTANCE_DIGEST: ${{ inputs.final_acceptance_sha256 }}
+          ACCEPTANCE_URL: ${{ inputs.final_acceptance_url }}
+          APP_EMAIL: ${{ steps.release-bot.outputs.email }}
+          APP_LOGIN: ${{ steps.release-bot.outputs.login }}
+          BRANCH: ${{ steps.receipt.outputs.branch }}
+          EVIDENCE_ID: ${{ needs.validate.outputs.evidence_id }}
+          EXPECTED_BASE_TREE: ${{ steps.receipt.outputs.base_tree }}
+          EXPECTED_RECEIPT_BLOB: ${{ steps.receipt.outputs.receipt_blob }}
+          EXPECTED_REQUIREMENTS_BLOB: ${{ steps.receipt.outputs.requirements_blob }}
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          MAIN_SHA: ${{ steps.main.outputs.sha }}
+        run: |
+          set -euo pipefail
+          gh auth setup-git
+          [[ "$EXPECTED_BASE_TREE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_RECEIPT_BLOB" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_REQUIREMENTS_BLOB" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse "${MAIN_SHA}^{tree}")" = "$EXPECTED_BASE_TREE"
+          test "$(git rev-parse \
+            "${MAIN_SHA}:.lit/security-release-receipt.json")" = \
+            "$EXPECTED_RECEIPT_BLOB"
+          test "$(git rev-parse \
+            "${MAIN_SHA}:collections/requirements-base.yml")" = \
+            "$EXPECTED_REQUIREMENTS_BLOB"
+          index_root="$(mktemp -d "${RUNNER_TEMP:?}/mlx90-cleanup-index.XXXXXX")"
+          chmod 0700 "$index_root"
+          cleanup_index="${index_root}/index"
+          trap 'rm -f -- "$cleanup_index"; rmdir -- "$index_root"' EXIT
+          GIT_INDEX_FILE="$cleanup_index" git read-tree "$EXPECTED_BASE_TREE"
+          receipt_stage="$(GIT_INDEX_FILE="$cleanup_index" git ls-files \
+            --stage -- .lit/security-release-receipt.json)"
+          test "$receipt_stage" = \
+            "100644 ${EXPECTED_RECEIPT_BLOB} 0"$'\t''.lit/security-release-receipt.json'
+          GIT_INDEX_FILE="$cleanup_index" git update-index --force-remove -- \
+            .lit/security-release-receipt.json
+          expected_candidate_tree="$(GIT_INDEX_FILE="$cleanup_index" git write-tree)"
+          [[ "$expected_candidate_tree" =~ ^[0-9a-f]{40}$ ]]
+          test "$expected_candidate_tree" != "$EXPECTED_BASE_TREE"
+          rm -f -- "$cleanup_index"
+          rmdir -- "$index_root"
+          trap - EXIT
+          branch_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BRANCH}" \
+            --jq .object.sha 2>/dev/null || true)"
+          if [ -n "$branch_sha" ]; then
+            [[ "$branch_sha" =~ ^[0-9a-f]{40}$ ]]
+            git fetch origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
+            test "$(git rev-list --count "${MAIN_SHA}..${branch_sha}")" -eq 1
+            test "$(git rev-parse "${branch_sha}^")" = "$MAIN_SHA"
+            test "$(git rev-parse "${branch_sha}^{tree}")" = \
+              "$expected_candidate_tree"
+            test "$(git diff --name-status "$MAIN_SHA" "$branch_sha")" = \
+              $'D\t.lit/security-release-receipt.json'
+            head_sha="$branch_sha"
+          else
+            git config user.name "$APP_LOGIN"
+            git config user.email "$APP_EMAIL"
+            head_sha="$(git commit-tree "$expected_candidate_tree" \
+              -p "$MAIN_SHA" \
+              -m "chore(security): retire ${EVIDENCE_ID} receipt" \
+              -m "Final-Acceptance-URL: ${ACCEPTANCE_URL}" \
+              -m "Final-Acceptance-SHA256: ${ACCEPTANCE_DIGEST}" \
+              -m "Security-Base-SHA: ${MAIN_SHA}")"
+            [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]
+            test "$(git rev-parse "${head_sha}^")" = "$MAIN_SHA"
+            test "$(git rev-parse "${head_sha}^{tree}")" = \
+              "$expected_candidate_tree"
+            test "$(git diff --name-status "$MAIN_SHA" "$head_sha")" = \
+              $'D\t.lit/security-release-receipt.json'
+            live_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
+              --jq .object.sha)"
+            test "$live_main" = "$MAIN_SHA"
+            git push origin "${head_sha}:refs/heads/${BRANCH}"
+          fi
+          prs="$(gh pr list --repo "$GITHUB_REPOSITORY" --state all \
+            --head "$BRANCH" --json number,state,headRefOid,baseRefName,url)"
+          pr_count="$(jq 'length' <<<"$prs")"
+          test "$pr_count" -le 1
+          if [ "$pr_count" -eq 0 ]; then
+            body="Delivered evidence: ${ACCEPTANCE_URL}\n\n"
+            body+="This App-authored PR only retires the consumed MLX-90 receipt. "
+            body+="The required guard proves the exact deletion immediately before the protected merge."
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main \
+              --head "$BRANCH" --title "chore(security): retire ${EVIDENCE_ID} receipt" \
+              --body "$body" >/dev/null
+          else
+            test "$(jq -r '.[0].state' <<<"$prs")" = OPEN
+            test "$(jq -r '.[0].baseRefName' <<<"$prs")" = main
+            test "$(jq -r '.[0].headRefOid' <<<"$prs")" = "$head_sha"
+            jq -e '.[0].url | type == "string" and length > 0' \
+              <<<"$prs" >/dev/null
+          fi
