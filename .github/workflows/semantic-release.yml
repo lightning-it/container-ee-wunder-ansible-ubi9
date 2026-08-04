@@ -132,7 +132,7 @@ jobs:
             test "$(git rev-parse "${SOURCE_SHA}:${source_path}")" = "$blob_oid"
             snapshot_path="${snapshot_root}/${snapshot_name}"
             git cat-file blob "$blob_oid" \
-              | (umask 077 && dd of="$snapshot_path" bs=65536 status=none oflag=excl)
+              | (umask 077 && dd of="$snapshot_path" bs=65536 status=none conv=excl)
             chmod 0400 "$snapshot_path"
             test "$(stat -c '%a' "$snapshot_path")" = 400
             test "$(git hash-object --no-filters "$snapshot_path")" = "$blob_oid"

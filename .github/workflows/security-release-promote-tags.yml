@@ -116,7 +116,7 @@ jobs:
             test "$(git rev-parse "${RUN_SHA}:${source_path}")" = "$oid"
             snapshot_path="${tool_root}/${snapshot_name}"
             git cat-file blob "$oid" \
-              | (umask 077 && dd of="$snapshot_path" bs=65536 status=none oflag=excl)
+              | (umask 077 && dd of="$snapshot_path" bs=65536 status=none conv=excl)
             chmod 0400 "$snapshot_path"
             test "$(git hash-object --no-filters "$snapshot_path")" = "$oid"
             {
@@ -435,7 +435,7 @@ jobs:
           chmod 0700 "$tool_root"
           snapshot_path="${tool_root}/promote-container-latest.py"
           git cat-file blob "$oid" \
-            | (umask 077 && dd of="$snapshot_path" bs=65536 status=none oflag=excl)
+            | (umask 077 && dd of="$snapshot_path" bs=65536 status=none conv=excl)
           chmod 0400 "$snapshot_path"
           test "$(git hash-object --no-filters "$snapshot_path")" = "$oid"
           {
@@ -787,7 +787,7 @@ jobs:
             test "$(git rev-parse "${MAIN_SHA}:${source_path}")" = "$oid"
             snapshot_path="${parser_root}/${snapshot_name}"
             git cat-file blob "$oid" \
-              | (umask 077 && dd of="$snapshot_path" bs=65536 status=none oflag=excl)
+              | (umask 077 && dd of="$snapshot_path" bs=65536 status=none conv=excl)
             chmod 0400 "$snapshot_path"
             test "$(git hash-object --no-filters "$snapshot_path")" = "$oid"
             printf '%s|%s\n' "$oid" "$snapshot_path"
@@ -799,7 +799,7 @@ jobs:
           requirements_snapshot="${parser_root}/requirements-base.yml"
           git cat-file blob "$requirements_blob" \
             | (umask 077 && dd of="$requirements_snapshot" \
-                bs=65536 status=none oflag=excl)
+                bs=65536 status=none conv=excl)
           chmod 0400 "$requirements_snapshot"
           test "$(git hash-object --no-filters "$requirements_snapshot")" = \
             "$requirements_blob"
