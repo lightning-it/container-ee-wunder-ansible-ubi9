@@ -229,13 +229,19 @@ jobs:
       - name: Prove the update diff is narrowly bounded
         run: |
           set -euo pipefail
-          mapfile -t changed < <(git diff --name-only)
+          mapfile -t changed < <(
+            {
+              git diff --name-only
+              git ls-files --others --exclude-standard
+            } | LC_ALL=C sort -u
+          )
           test "${#changed[@]}" -eq 2
           printf '%s\n' "${changed[@]}" | sort -u >/tmp/changed
           printf '%s\n' \
             .lit/security-release-receipt.json \
             collections/requirements-base.yml | sort -u >/tmp/allowed
           cmp /tmp/allowed /tmp/changed
+          git add --intent-to-add -- .lit/security-release-receipt.json
           git diff --check
 
       - name: Create the App-authored security update pull request
