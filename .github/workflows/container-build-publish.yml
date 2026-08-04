@@ -43,6 +43,8 @@ jobs:
     name: Build & push image to Quay.io
     if: >-
       github.actor == 'lightning-it-release-automation[bot]'
+      && github.triggering_actor == 'lightning-it-release-automation[bot]'
+      && github.event.sender.login == 'lightning-it-release-automation[bot]'
       && github.repository == 'lightning-it/container-ee-wunder-ansible-ubi9'
       && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
@@ -73,7 +75,6 @@ jobs:
           private-key: ${{ secrets.RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: container-ee-wunder-ansible-ubi9
-          permission-actions: read
           permission-contents: read
 
       - name: Validate exact tag-bound draft dispatch
@@ -82,6 +83,9 @@ jobs:
           ACTIONS_GH_TOKEN: ${{ github.token }}
           APP_INSTALLATION_ID: ${{ steps.release-read-app.outputs.installation-id }}
           APP_SLUG: ${{ steps.release-read-app.outputs.app-slug }}
+          DISPATCH_ACTOR: ${{ github.actor }}
+          DISPATCH_SENDER_LOGIN: ${{ github.event.sender.login }}
+          DISPATCH_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
           GH_TOKEN: ${{ steps.release-read-app.outputs.token }}
           RELEASE_BODY_SHA256: ${{ inputs.release_body_sha256 }}
           RELEASE_ID: ${{ inputs.release_id }}
@@ -93,6 +97,9 @@ jobs:
           set -euo pipefail
           test "$APP_SLUG" = "lightning-it-release-automation"
           test "$APP_INSTALLATION_ID" = "148019054"
+          test "$DISPATCH_ACTOR" = "lightning-it-release-automation[bot]"
+          test "$DISPATCH_SENDER_LOGIN" = "lightning-it-release-automation[bot]"
+          test "$DISPATCH_TRIGGERING_ACTOR" = "lightning-it-release-automation[bot]"
           actual_repositories="$(
             gh api --paginate "installation/repositories?per_page=100" \
               | jq -sc '[.[].repositories[].full_name] | sort | unique'
@@ -107,6 +114,7 @@ jobs:
           [[ "$SEMANTIC_RELEASE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           test "$GITHUB_REF" = "refs/tags/${RELEASE_TAG_INPUT}"
           test "$GITHUB_SHA" = "$SOURCE_SHA"
+          echo "Validate exact semantic-release orchestrator run."
           orchestrator="$(GH_TOKEN="$ACTIONS_GH_TOKEN" gh api \
             "repos/${GITHUB_REPOSITORY}/actions/runs/${SEMANTIC_RELEASE_RUN_ID}")"
           jq -e \
@@ -127,6 +135,7 @@ jobs:
               )
             ' <<<"$orchestrator" >/dev/null
           orchestrator_sha="$(jq -er .head_sha <<<"$orchestrator")"
+          echo "Validate release-source ancestry against the orchestrator."
           orchestrator_comparison="$(gh api \
             "repos/${GITHUB_REPOSITORY}/compare/${SOURCE_SHA}...${orchestrator_sha}")"
           jq -e --arg source_sha "$SOURCE_SHA" '
@@ -134,6 +143,7 @@ jobs:
             and .behind_by == 0
             and .merge_base_commit.sha == $source_sha
           ' <<<"$orchestrator_comparison" >/dev/null
+          echo "Validate the exact App-authored release draft."
           release="$(gh api \
             -H 'X-GitHub-Api-Version: 2026-03-10' \
             "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")"
@@ -756,6 +766,9 @@ jobs:
         shell: bash
         env:
           ACTIONS_GH_TOKEN: ${{ github.token }}
+          DISPATCH_ACTOR: ${{ github.actor }}
+          DISPATCH_SENDER_LOGIN: ${{ github.event.sender.login }}
+          DISPATCH_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
           GH_TOKEN: ${{ steps.release-read-app.outputs.token }}
           RELEASE_BODY_SHA256: ${{ inputs.release_body_sha256 }}
           RELEASE_ID: ${{ inputs.release_id }}
@@ -763,6 +776,9 @@ jobs:
           SEMANTIC_RELEASE_RUN_ID: ${{ inputs.semantic_release_run_id }}
         run: |
           set -euo pipefail
+          test "$DISPATCH_ACTOR" = "lightning-it-release-automation[bot]"
+          test "$DISPATCH_SENDER_LOGIN" = "lightning-it-release-automation[bot]"
+          test "$DISPATCH_TRIGGERING_ACTOR" = "lightning-it-release-automation[bot]"
           [[ "$RELEASE_BODY_SHA256" =~ ^[0-9a-f]{64}$ ]]
           by_id="$(gh api \
             -H 'X-GitHub-Api-Version: 2026-03-10' \
@@ -819,6 +835,7 @@ jobs:
           chmod 0500 "$boundary_script"
           bash "$boundary_script" "$FULL_SHA"
           completed_orchestrator=
+          echo "Wait for the exact semantic-release orchestrator to succeed."
           for poll in {1..24}; do
             orchestrator="$(GH_TOKEN="$ACTIONS_GH_TOKEN" gh api \
               "repos/${GITHUB_REPOSITORY}/actions/runs/${SEMANTIC_RELEASE_RUN_ID}")"
@@ -835,6 +852,7 @@ jobs:
                 and .path == ".github/workflows/semantic-release.yml"
               ' <<<"$orchestrator" >/dev/null
             orchestrator_sha="$(jq -er .head_sha <<<"$orchestrator")"
+            echo "Revalidate release-source ancestry against the orchestrator."
             orchestrator_comparison="$(gh api \
               "repos/${GITHUB_REPOSITORY}/compare/${FULL_SHA}...${orchestrator_sha}")"
             jq -e --arg source_sha "$FULL_SHA" '
