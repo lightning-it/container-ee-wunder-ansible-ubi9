@@ -46,9 +46,9 @@ SBOM_MAX_BYTES = 64 * 1024 * 1024
 SIGNATURE_MAX_BYTES = 4 * 1024 * 1024
 PROVENANCE_MAX_BYTES = 16 * 1024 * 1024
 CANONICAL_IMAGES = {
-    "public": "quay.io/lightning-it/ee-wunder-ansible-ubi9",
-    "certified": "quay.io/lightning-it/ee-wunder-ansible-ubi9-certified",
-    "bootstrap": "quay.io/lightning-it/ee-wunder-ansible-ubi9-bootstrap",
+    "public": "quay.io/l-it/ee-wunder-ansible-ubi9",
+    "certified": "quay.io/l-it/ee-wunder-ansible-ubi9-certified",
+    "bootstrap": "quay.io/l-it/ee-wunder-ansible-ubi9-bootstrap",
 }
 MACOS_SYSTEM_ALIASES = {
     Path("/tmp"): Path("/private/tmp"),
