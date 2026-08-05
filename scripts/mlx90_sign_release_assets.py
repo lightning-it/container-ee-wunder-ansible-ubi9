@@ -1079,6 +1079,7 @@ def reauthenticate_profile(
                 reference,
             ],
             timeout=900,
+            max_output_bytes=MAX_SBOM_BYTES,
         ),
         f"live {profile} SBOM",
     )
