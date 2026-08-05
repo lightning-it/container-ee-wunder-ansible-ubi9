@@ -634,7 +634,10 @@ jobs:
           tool_dir="$(mktemp -d \
             "${RUNNER_TEMP:?}/mlx90-consumer-tools.XXXXXX")"
           chmod 0700 "$tool_dir"
-          for tool in security-release-consumer.py mlx90_secure_files.py; do
+          for tool in \
+            security-release-consumer.py \
+            mlx90_resolve_consumer_merge.py \
+            mlx90_secure_files.py; do
             tool_blob="$(git rev-parse "${FULL_SHA}:scripts/${tool}")"
             [[ "$tool_blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
             (umask 077 && git cat-file blob "$tool_blob" >"${tool_dir}/${tool}")
@@ -738,19 +741,60 @@ jobs:
           )] | length' <<<"$assets")"
           test "$revocation_count" -eq 0
           export GH_TOKEN="$CONSUMER_TOKEN"
-          test "$(git rev-parse HEAD^1)" = "$base_sha"
+          consumer_merge_result="$(
+            python3 "${tool_dir}/mlx90_resolve_consumer_merge.py" \
+              --repository . \
+              --base-sha "$base_sha" \
+              --source-sha "$FULL_SHA"
+          )"
+          jq -e \
+            --arg base "$base_sha" \
+            --arg source "$FULL_SHA" '
+              keys == [
+                "baseSha",
+                "consumerHeadSha",
+                "releaseSourceSha",
+                "securityMergeSha"
+              ]
+              and .baseSha == $base
+              and .releaseSourceSha == $source
+              and (.consumerHeadSha | test("^[0-9a-f]{40}$"))
+              and (.securityMergeSha | test("^[0-9a-f]{40}$"))
+            ' <<<"$consumer_merge_result" >/dev/null
+          security_merge_sha="$(jq -er '.securityMergeSha' \
+            <<<"$consumer_merge_result")"
+          consumer_head_sha="$(jq -er '.consumerHeadSha' \
+            <<<"$consumer_merge_result")"
           prs="$(
             gh api \
               -H 'Accept: application/vnd.github+json' \
-              "repos/${GITHUB_REPOSITORY}/commits/${FULL_SHA}/pulls"
+              "repos/${GITHUB_REPOSITORY}/commits/${security_merge_sha}/pulls"
           )"
-          pr_count="$(jq '[.[] | select(.merged_at != null and .base.ref == "main" and (.head.ref | startswith("security/mlx90-")))] | length' <<<"$prs")"
+          pr_count="$(jq \
+            --arg base "$base_sha" \
+            --arg head "$consumer_head_sha" \
+            --arg merge "$security_merge_sha" '[.[] | select(
+              .merged_at != null
+              and .base.ref == "main"
+              and .base.sha == $base
+              and (.head.ref | startswith("security/mlx90-"))
+              and .head.sha == $head
+              and .merge_commit_sha == $merge
+            )] | length' <<<"$prs")"
           test "$pr_count" -eq 1
-          consumer_pr="$(jq -r '[.[] | select(.merged_at != null and .base.ref == "main" and (.head.ref | startswith("security/mlx90-")))][0].number' <<<"$prs")"
-          consumer_head_sha="$(jq -r '[.[] | select(.merged_at != null and .base.ref == "main" and (.head.ref | startswith("security/mlx90-")))][0].head.sha' <<<"$prs")"
+          consumer_pr="$(jq -r \
+            --arg base "$base_sha" \
+            --arg head "$consumer_head_sha" \
+            --arg merge "$security_merge_sha" '[.[] | select(
+              .merged_at != null
+              and .base.ref == "main"
+              and .base.sha == $base
+              and (.head.ref | startswith("security/mlx90-"))
+              and .head.sha == $head
+              and .merge_commit_sha == $merge
+            )][0].number' <<<"$prs")"
           [[ "$consumer_pr" =~ ^[1-9][0-9]*$ ]]
           [[ "$consumer_head_sha" =~ ^[0-9a-f]{40}$ ]]
-          test "$(git rev-parse HEAD^2)" = "$consumer_head_sha"
           {
             echo "MLX90_CONSUMER_PR=${consumer_pr}"
             echo "MLX90_CONSUMER_HEAD_SHA=${consumer_head_sha}"
