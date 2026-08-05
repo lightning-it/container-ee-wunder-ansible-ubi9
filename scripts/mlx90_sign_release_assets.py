@@ -298,7 +298,11 @@ def tar_manifest(payload: bytes, label: str) -> dict[str, str]:
         for member in archive:
             candidate = PurePosixPath(member.name)
             parts = tuple(part for part in candidate.parts if part not in {"", "."})
-            if candidate.is_absolute() or not parts or ".." in parts:
+            if candidate.is_absolute() or ".." in parts:
+                fail(f"{label} contains an unsafe path")
+            if not parts:
+                if member.isdir():
+                    continue
                 fail(f"{label} contains an unsafe path")
             normalized = PurePosixPath(*parts).as_posix()
             if member.isdir():
