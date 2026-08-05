@@ -7,6 +7,7 @@ import argparse
 import fcntl
 import hashlib
 import io
+import itertools
 import json
 import os
 import re
@@ -36,6 +37,9 @@ SECURITY_ID = re.compile(
     r"^(?:CVE-[0-9]{4}-[0-9]{4,}|"
     r"GHSA-[23456789cfghjmpqrvwx]{4}(?:-[23456789cfghjmpqrvwx]{4}){2}|"
     r"LIT-SEC-[A-Z0-9._-]+)$"
+)
+UUID_REFERENCE = re.compile(
+    r"^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$", re.IGNORECASE
 )
 PROFILES = ("bootstrap", "certified", "public")
 PROFILE_SUFFIXES = {"public": "", "certified": "-certified", "bootstrap": "-bootstrap"}
@@ -72,6 +76,8 @@ MAX_SBOM_BYTES = 64 * 1024 * 1024
 MAX_SIGNATURE_BYTES = 4 * 1024 * 1024
 MAX_COLLECTION_BYTES = 256 * 1024 * 1024
 MAX_INSTALLED_TREE_BYTES = 512 * 1024 * 1024
+MAX_SBOM_CANONICAL_ASSIGNMENTS = 720
+MAX_SBOM_CANONICAL_WORK_BYTES = 256 * 1024 * 1024
 TRIVY_IMAGES = {
     "docker.io/aquasec/trivy:0.72.0@sha256:c6e969c5662a546ad5de4a73c2a6b7a7c627f86d916903e175aa623af5b97ada",
     "docker.io/aquasec/trivy:0.72.0@sha256:405015d1cd07a2630301169e694a5a420afc4dd553fb462189d4f109ba56a6df",
@@ -912,6 +918,87 @@ def validate_profile(
     }
 
 
+SBOM_REFERENCE_KEYS = {
+    "assemblies",
+    "bom-ref",
+    "dependencies",
+    "dependsOn",
+    "provides",
+    "ref",
+    "services",
+    "subjects",
+    "vulnerabilities",
+}
+SBOM_UNORDERED_ARRAY_KEYS = {
+    "advisories",
+    "affects",
+    "assemblies",
+    "components",
+    "compositions",
+    "cwes",
+    "dependencies",
+    "dependsOn",
+    "externalReferences",
+    "hashes",
+    "licenses",
+    "properties",
+    "provides",
+    "ratings",
+    "services",
+    "subjects",
+    "tools",
+    "versions",
+    "vulnerabilities",
+}
+
+
+def canonical_json(value: Any) -> str:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+
+def canonicalize_sbom_sets(value: Any, key: str | None = None) -> Any:
+    if isinstance(value, dict):
+        return {
+            child_key: canonicalize_sbom_sets(item, child_key)
+            for child_key, item in sorted(value.items())
+        }
+    if isinstance(value, list):
+        items = [canonicalize_sbom_sets(item, key) for item in value]
+        if key in SBOM_UNORDERED_ARRAY_KEYS:
+            return sorted(items, key=canonical_json)
+        return items
+    return value
+
+
+def reference_independent_content(value: Any, key: str | None = None) -> Any:
+    if isinstance(value, dict):
+        return {
+            child_key: reference_independent_content(item, child_key)
+            for child_key, item in sorted(value.items())
+            if child_key != "bom-ref"
+        }
+    if isinstance(value, list):
+        return [reference_independent_content(item, key) for item in value]
+    if isinstance(value, str) and key in SBOM_REFERENCE_KEYS:
+        return "<cyclonedx-reference>"
+    return value
+
+
+def bounded_factorial(value: int, limit: int, name: str) -> int:
+    result = 1
+    for factor in range(2, value + 1):
+        if result > limit // factor:
+            fail(f"{name} exceeds the bounded reference canonicalization work limit")
+        result *= factor
+    return result
+
+
 def normalize_sbom(value: Any, name: str) -> dict[str, Any]:
     sbom = require_object(value, name)
     normalized = json.loads(json.dumps(sbom, sort_keys=True, allow_nan=False))
@@ -919,7 +1006,109 @@ def normalize_sbom(value: Any, name: str) -> dict[str, Any]:
     metadata = normalized.get("metadata")
     if isinstance(metadata, dict):
         metadata.pop("timestamp", None)
-    return normalized
+
+    components = normalized.get("components")
+    if not isinstance(components, list):
+        fail(f"{name} components are missing")
+    referenceable_records: list[tuple[dict[str, Any], str]] = []
+
+    def collect_referenceable_records(item: Any, location: str) -> None:
+        if isinstance(item, dict):
+            if "bom-ref" in item:
+                referenceable_records.append((item, location))
+            for child_key, child in sorted(item.items()):
+                collect_referenceable_records(child, f"{location}.{child_key}")
+        elif isinstance(item, list):
+            for index, child in enumerate(item):
+                collect_referenceable_records(child, f"{location}[{index}]")
+
+    collect_referenceable_records(normalized, name)
+
+    seen_references: set[str] = set()
+    fingerprint_references: dict[str, set[str]] = {}
+    for record, location in referenceable_records:
+        reference = record.get("bom-ref")
+        if not isinstance(reference, str) or not reference:
+            fail(f"{location} has an invalid bom-ref")
+        if reference in seen_references:
+            fail(f"{name} reuses a bom-ref")
+        seen_references.add(reference)
+        semantic_record = reference_independent_content(record)
+        fingerprint = hashlib.sha256(
+            canonical_json(canonicalize_sbom_sets(semantic_record)).encode("utf-8")
+        ).hexdigest()
+        fingerprint_references.setdefault(fingerprint, set()).add(reference)
+
+    def rewrite_references(
+        item: Any, references: dict[str, str], key: str | None = None
+    ) -> Any:
+        if isinstance(item, dict):
+            rewritten = {
+                child_key: rewrite_references(child, references, child_key)
+                for child_key, child in sorted(item.items())
+            }
+            return rewritten
+        if isinstance(item, list):
+            rewritten = [rewrite_references(child, references, key) for child in item]
+            if key in SBOM_UNORDERED_ARRAY_KEYS:
+                return sorted(rewritten, key=canonical_json)
+            return rewritten
+        if isinstance(item, str) and key in SBOM_REFERENCE_KEYS:
+            if item in references:
+                return references[item]
+            if UUID_REFERENCE.fullmatch(item):
+                fail(f"{name} contains an unresolved UUID reference")
+        return item
+
+    document_bytes = len(canonical_json(normalized).encode("utf-8"))
+    assignment_limit = min(
+        MAX_SBOM_CANONICAL_ASSIGNMENTS,
+        max(1, MAX_SBOM_CANONICAL_WORK_BYTES // max(1, document_bytes)),
+    )
+    fixed_references: dict[str, str] = {}
+    ambiguous_groups: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+    assignment_count = 1
+    for fingerprint, values in sorted(fingerprint_references.items()):
+        references = tuple(sorted(values))
+        canonical_root = f"urn:mlx90:cyclonedx-object:sha256:{fingerprint}"
+        if len(references) == 1:
+            fixed_references[references[0]] = canonical_root
+            continue
+        group_assignments = bounded_factorial(
+            len(references), assignment_limit // assignment_count, name
+        )
+        assignment_count *= group_assignments
+        canonical_references = tuple(
+            f"{canonical_root}:{index}" for index in range(len(references))
+        )
+        ambiguous_groups.append((references, canonical_references))
+
+    best_text: str | None = None
+    best_value: dict[str, Any] | None = None
+
+    def select_canonical_assignment(
+        index: int, references: dict[str, str]
+    ) -> None:
+        nonlocal best_text, best_value
+        if index == len(ambiguous_groups):
+            candidate = rewrite_references(normalized, references)
+            candidate_text = canonical_json(candidate)
+            if best_text is None or candidate_text < best_text:
+                best_text = candidate_text
+                best_value = candidate
+            return
+        originals, canonical_values = ambiguous_groups[index]
+        for permutation in itertools.permutations(canonical_values):
+            for original, canonical_value in zip(originals, permutation):
+                references[original] = canonical_value
+            select_canonical_assignment(index + 1, references)
+            for original in originals:
+                del references[original]
+
+    select_canonical_assignment(0, dict(fixed_references))
+    if best_value is None:
+        fail(f"{name} could not be canonicalized")
+    return best_value
 
 
 def reauthenticate_profile(
