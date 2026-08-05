@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly SBOM_MAX_BYTES=$((64 * 1024 * 1024))
+
 : "${MLX90_TRUST_COMMIT:?exact devtools trust commit is required}"
 [[ "$MLX90_TRUST_COMMIT" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]] || {
   echo "ERROR: invalid devtools trust commit." >&2
@@ -314,7 +316,7 @@ docker run --rm \
 sbom_capture="$(
   capture_generated_file \
     "dist/sbom-${EVIDENCE_NAME}.cdx.json" \
-    $((16 * 1024 * 1024)) \
+    "$SBOM_MAX_BYTES" \
     "generated container SBOM"
 )"
 captured_payload "$sbom_capture" | jq -e '
