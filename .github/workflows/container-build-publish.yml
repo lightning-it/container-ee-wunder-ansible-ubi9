@@ -1808,6 +1808,19 @@ jobs:
               <<<"$release" >/dev/null
             release_mode=published
           fi
+          release_html_url="$(jq -er .html_url <<<"$release")"
+          tagged_release_html_url="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG_INPUT}"
+          tagged_download_prefix="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG_INPUT}/"
+          if [ "$release_mode" = draft ]; then
+            draft_html_prefix="https://github.com/${GITHUB_REPOSITORY}/releases/tag/"
+            draft_marker="${release_html_url#"$draft_html_prefix"}"
+            test "$release_html_url" = "${draft_html_prefix}${draft_marker}"
+            [[ "$draft_marker" =~ ^untagged-[0-9a-f]{20}$ ]]
+            expected_download_prefix="https://github.com/${GITHUB_REPOSITORY}/releases/download/${draft_marker}/"
+          else
+            test "$release_html_url" = "$tagged_release_html_url"
+            expected_download_prefix="$tagged_download_prefix"
+          fi
           actual_body_sha256="$(
             jq -jr '.body | select(type == "string")' <<<"$release" \
               | sha256sum | awk '{print $1}'
@@ -1948,7 +1961,7 @@ jobs:
           existing_json="$(jq -ce '[.[][]]' <<<"$existing_pages")"
           jq -e \
             --arg api_prefix "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/" \
-            --arg download_prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG_INPUT}/" \
+            --arg download_prefix "$expected_download_prefix" \
             --arg uploader "$APP_BOT_LOGIN" \
             --argjson expected "$expected_names_json" '
               type == "array"
@@ -2066,7 +2079,7 @@ jobs:
           final_json="$(jq -ce '[.[][]]' <<<"$final_pages")"
           jq -e \
             --arg api_prefix "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/assets/" \
-            --arg download_prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG_INPUT}/" \
+            --arg download_prefix "$expected_download_prefix" \
             --arg uploader "$APP_BOT_LOGIN" \
             --argjson expected "$expected_names_json" '
               ([.[].name] | sort) == $expected
@@ -2106,7 +2119,6 @@ jobs:
             digest,
             state,
             url,
-            browser_download_url,
             uploader: .uploader.login
           }] | sort_by(.name)' <<<"$final_json")"
           asset_inventory_b64="$(printf '%s' "$prepublish_release_assets" \
@@ -2195,7 +2207,6 @@ jobs:
             digest,
             state,
             url,
-            browser_download_url,
             uploader: .uploader.login
           }] | sort_by(.name)' <<<"$current_assets_pages")"
           test "$current_assets" = \
@@ -2306,7 +2317,6 @@ jobs:
               digest,
               state,
               url,
-              browser_download_url,
               uploader: .uploader.login
             }] | sort_by(.name)' <<<"$mutation_asset_pages")"
             test "$mutation_assets" = \
@@ -2367,6 +2377,7 @@ jobs:
               "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")"
             jq -e \
               --arg author "$APP_BOT_LOGIN" \
+              --arg html_url "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG_INPUT}" \
               --arg sha "$CONSUMER_MERGE_SHA" \
               --arg tag "$RELEASE_TAG_INPUT" \
               --argjson release_id "$RELEASE_ID" '
@@ -2374,6 +2385,7 @@ jobs:
                 and .tag_name == $tag
                 and .target_commitish == $sha
                 and .name == $tag
+                and .html_url == $html_url
                 and .draft == false
                 and .prerelease == false
                 and (.immutable | type == "boolean")
@@ -2396,11 +2408,16 @@ jobs:
               digest,
               state,
               url,
-              browser_download_url,
               uploader: .uploader.login
             }] | sort_by(.name)' <<<"$candidate_asset_pages")"
             test "$candidate_assets" = \
               "$prepublish_release_assets"
+            jq -e \
+              --arg download_prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG_INPUT}/" '
+                all(.[];
+                  .browser_download_url == ($download_prefix + .name)
+                )
+              ' <<<"$candidate_asset_list" >/dev/null
             if [ "$(jq -r .immutable <<<"$candidate")" = true ]; then
               immutable_release="$candidate"
               break
