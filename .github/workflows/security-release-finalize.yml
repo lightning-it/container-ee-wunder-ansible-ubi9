@@ -206,28 +206,68 @@ jobs:
           test "$(gh api \
             "repos/${REPOSITORY}/commits/${CONTAINER_RELEASE_TAG}" --jq .sha)" = \
             "$CONSUMER_MERGE_SHA"
+          receipt_json="$(git cat-file blob "$RECEIPT_BLOB")"
+          base_sha="$(jq -er '.baseSha' <<<"$receipt_json")"
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]]
+          consumer_merge_result="$(
+            python3 scripts/mlx90_resolve_consumer_merge.py \
+              --repository . \
+              --base-sha "$base_sha" \
+              --source-sha "$CONSUMER_MERGE_SHA"
+          )"
+          jq -e \
+            --arg base "$base_sha" \
+            --arg source "$CONSUMER_MERGE_SHA" '
+              keys == [
+                "baseSha",
+                "consumerHeadSha",
+                "releaseSourceSha",
+                "securityMergeSha"
+              ]
+              and .baseSha == $base
+              and .releaseSourceSha == $source
+              and (.consumerHeadSha | test("^[0-9a-f]{40}$"))
+              and (.securityMergeSha | test("^[0-9a-f]{40}$"))
+            ' <<<"$consumer_merge_result" >/dev/null
+          security_merge_sha="$(jq -er '.securityMergeSha' \
+            <<<"$consumer_merge_result")"
+          consumer_head_sha="$(jq -er '.consumerHeadSha' \
+            <<<"$consumer_merge_result")"
           prs="$(
             gh api \
               -H 'Accept: application/vnd.github+json' \
-              "repos/${REPOSITORY}/commits/${CONSUMER_MERGE_SHA}/pulls"
+              "repos/${REPOSITORY}/commits/${security_merge_sha}/pulls"
           )"
-          pr_count="$(jq '[.[] | select(.merged_at != null and .base.ref == "main" and (.head.ref | startswith("security/mlx90-")))] | length' <<<"$prs")"
+          pr_count="$(jq \
+            --arg base "$base_sha" \
+            --arg head "$consumer_head_sha" \
+            --arg merge "$security_merge_sha" '[.[] | select(
+              .merged_at != null
+              and .base.ref == "main"
+              and .base.sha == $base
+              and (.head.ref | startswith("security/mlx90-"))
+              and .head.sha == $head
+              and .merge_commit_sha == $merge
+            )] | length' <<<"$prs")"
           test "$pr_count" -eq 1
-          consumer_pr="$(jq -r '[.[] | select(.merged_at != null and .base.ref == "main" and (.head.ref | startswith("security/mlx90-")))][0].number' <<<"$prs")"
-          consumer_head_sha="$(jq -r '[.[] | select(.merged_at != null and .base.ref == "main" and (.head.ref | startswith("security/mlx90-")))][0].head.sha' <<<"$prs")"
-          receipt_json="$(git cat-file blob "$RECEIPT_BLOB")"
-          base_sha="$(jq -er '.baseSha' <<<"$receipt_json")"
+          consumer_pr="$(jq -r \
+            --arg base "$base_sha" \
+            --arg head "$consumer_head_sha" \
+            --arg merge "$security_merge_sha" '[.[] | select(
+              .merged_at != null
+              and .base.ref == "main"
+              and .base.sha == $base
+              and (.head.ref | startswith("security/mlx90-"))
+              and .head.sha == $head
+              and .merge_commit_sha == $merge
+            )][0].number' <<<"$prs")"
           [[ "$consumer_pr" =~ ^[1-9][0-9]*$ ]]
           [[ "$consumer_head_sha" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]]
-          read -r -a parents <<<"$(git show -s --format='%P' "$CONSUMER_MERGE_SHA")"
-          test "${#parents[@]}" -eq 2
-          test "${parents[0]}" = "$base_sha"
-          test "${parents[1]}" = "$consumer_head_sha"
           {
             echo "base_sha=$base_sha"
             echo "consumer_pr=$consumer_pr"
             echo "consumer_head_sha=$consumer_head_sha"
+            echo "security_merge_sha=$security_merge_sha"
           } >>"$GITHUB_OUTPUT"
 
       - name: Install cosign
