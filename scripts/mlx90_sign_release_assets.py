@@ -347,7 +347,9 @@ def collection_version_from_tar(payload: bytes, label: str) -> str:
 
 
 def require_collection_absent(payload: bytes, label: str) -> None:
-    """Prove that a successfully copied collection root has no target tree."""
+    """Prove that a copied Ansible root has no target collection tree."""
+
+    target = ("collections", "ansible_collections", "lit", "supplementary")
 
     try:
         archive = tarfile.open(fileobj=io.BytesIO(payload), mode="r:*")
@@ -361,17 +363,11 @@ def require_collection_absent(payload: bytes, label: str) -> None:
             parts = tuple(part for part in candidate.parts if part not in {"", "."})
             if candidate.is_absolute() or ".." in parts:
                 fail(f"{label} contains an unsafe path")
-            if any(
-                parts[offset : offset + 2] == ("lit", "supplementary")
-                for offset in range(max(0, len(parts) - 1))
-            ):
+            if parts[: len(target)] == target:
                 fail("bootstrap image unexpectedly contains lit.supplementary")
-            if (
-                parts
-                and parts[-1] == "lit"
-                and (member.issym() or member.islnk())
-            ):
-                fail("bootstrap lit namespace is not a verifiable directory")
+            if member.issym() or member.islnk():
+                if parts and parts == target[: len(parts)]:
+                    fail("bootstrap collection path is not a verifiable directory")
 
 
 def copy_collection_tree(
@@ -387,7 +383,7 @@ def copy_collection_tree(
             "/usr/share/ansible/collections/ansible_collections/"
             "lit/supplementary/."
             if expect_present
-            else "/usr/share/ansible/collections/ansible_collections/."
+            else "/usr/share/ansible/."
         )
         copied = subprocess.run(
             [
@@ -403,14 +399,14 @@ def copy_collection_tree(
         )
         if copied.returncode != 0 or not copied.stdout:
             detail = copied.stderr.decode("utf-8", errors="replace").strip()
-            target = "installed collection tree" if expect_present else "collection root"
+            target = "installed collection tree" if expect_present else "Ansible root"
             fail(f"{target} is unavailable: {detail or 'no diagnostic'}")
         if len(copied.stdout) > MAX_INSTALLED_TREE_BYTES:
             fail("installed collection copy exceeds the verification limit")
         if expect_present:
             result: bytes | None = copied.stdout
         else:
-            require_collection_absent(copied.stdout, "bootstrap collection root")
+            require_collection_absent(copied.stdout, "bootstrap Ansible root")
             result = None
     finally:
         removed = subprocess.run(
