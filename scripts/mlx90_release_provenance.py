@@ -24,9 +24,9 @@ from mlx90_secure_files import (
 
 REPOSITORY = "lightning-it/container-ee-wunder-ansible-ubi9"
 IMAGE_REPOSITORIES = {
-    "public": "quay.io/lightning-it/ee-wunder-ansible-ubi9",
-    "certified": "quay.io/lightning-it/ee-wunder-ansible-ubi9-certified",
-    "bootstrap": "quay.io/lightning-it/ee-wunder-ansible-ubi9-bootstrap",
+    "public": "quay.io/l-it/ee-wunder-ansible-ubi9",
+    "certified": "quay.io/l-it/ee-wunder-ansible-ubi9-certified",
+    "bootstrap": "quay.io/l-it/ee-wunder-ansible-ubi9-bootstrap",
 }
 FILE_SUBJECTS = {
     "sbom.cdx.json",
@@ -50,7 +50,7 @@ DIGEST = re.compile(r"\A[0-9a-f]{64}\Z")
 RUN_ID = re.compile(r"\A[1-9][0-9]*\Z")
 TAG = re.compile(r"\Av[0-9]+\.[0-9]+\.[0-9]+(?:[+-][0-9A-Za-z.-]+)?\Z")
 IMAGE_REF = re.compile(
-    r"\A(?P<repository>quay\.io/lightning-it/ee-wunder-ansible-ubi9"
+    r"\A(?P<repository>quay\.io/l-it/ee-wunder-ansible-ubi9"
     r"(?:-certified|-bootstrap)?)@sha256:(?P<digest>[0-9a-f]{64})\Z"
 )
 RFC3339 = re.compile(
