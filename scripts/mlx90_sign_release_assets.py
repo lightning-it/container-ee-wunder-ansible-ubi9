@@ -39,6 +39,13 @@ SECURITY_ID = re.compile(
 )
 PROFILES = ("bootstrap", "certified", "public")
 PROFILE_SUFFIXES = {"public": "", "certified": "-certified", "bootstrap": "-bootstrap"}
+CONTAINER_SBOM_ASSETS = {
+    "sbom.cdx.json",
+    *(f"sbom-{profile}.cdx.json" for profile in PROFILES),
+}
+CONTAINER_SIGNATURE_ASSETS = {
+    f"signature-{profile}.json" for profile in PROFILES
+}
 BASE_ASSETS = (
     "release-evidence.json",
     "release-evidence.md",
@@ -61,6 +68,8 @@ BASE_ASSETS = (
     "installed-collections-public.json",
 )
 MAX_ASSET_BYTES = 16 * 1024 * 1024
+MAX_SBOM_BYTES = 64 * 1024 * 1024
+MAX_SIGNATURE_BYTES = 4 * 1024 * 1024
 MAX_COLLECTION_BYTES = 256 * 1024 * 1024
 MAX_INSTALLED_TREE_BYTES = 512 * 1024 * 1024
 TRIVY_IMAGES = {
@@ -77,6 +86,16 @@ FILE_PROVENANCE_SUBJECTS = {
     *(f"signature-{profile}.json" for profile in PROFILES),
     *(f"installed-collections-{profile}.json" for profile in PROFILES),
 }
+
+
+def release_asset_max_bytes(name: str) -> int:
+    if name in CONTAINER_SBOM_ASSETS:
+        return MAX_SBOM_BYTES
+    if name in CONTAINER_SIGNATURE_ASSETS:
+        return MAX_SIGNATURE_BYTES
+    return MAX_ASSET_BYTES
+
+
 RECEIPT_FIELDS = {
     "schemaVersion",
     "evidenceId",
@@ -1559,7 +1578,7 @@ def sign_assets(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
                     args.source / name,
                     destination,
                     name,
-                    max_bytes=MAX_ASSET_BYTES,
+                    max_bytes=release_asset_max_bytes(name),
                     label=f"release asset {name}",
                     capture_bytes=True,
                     source_directory=source_directory,
@@ -1782,7 +1801,7 @@ def verify_signed_assets(args: argparse.Namespace) -> dict[str, Any]:
                     args.source / name,
                     destination,
                     name,
-                    max_bytes=MAX_ASSET_BYTES,
+                    max_bytes=release_asset_max_bytes(name),
                     label=f"signed release asset {name}",
                     capture_bytes=True,
                     source_directory=source_directory,

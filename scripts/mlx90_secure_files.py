@@ -18,7 +18,7 @@ from typing import Iterator, NamedTuple
 
 
 READ_CHUNK_SIZE = 1024 * 1024
-MAX_CAPTURE_SIZE = 16 * 1024 * 1024
+MAX_CAPTURE_SIZE = 64 * 1024 * 1024
 MACOS_SYSTEM_ALIASES = {
     Path("/tmp"): Path("/private/tmp"),
     Path("/var"): Path("/private/var"),

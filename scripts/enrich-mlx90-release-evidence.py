@@ -42,6 +42,7 @@ SECURITY_ID = re.compile(
 )
 PROFILES = ("public", "certified", "bootstrap")
 ASSURANCE_MAX_BYTES = 16 * 1024 * 1024
+SBOM_MAX_BYTES = 64 * 1024 * 1024
 SIGNATURE_MAX_BYTES = 4 * 1024 * 1024
 PROVENANCE_MAX_BYTES = 16 * 1024 * 1024
 CANONICAL_IMAGES = {
@@ -326,7 +327,7 @@ def validate_assurance(
             dist,
             assurance["sbom"],
             release_asset_base,
-            max_bytes=ASSURANCE_MAX_BYTES,
+            max_bytes=SBOM_MAX_BYTES,
             label=f"{profile} SBOM assurance asset",
         ),
         "installedCollections": checked_file_ref(

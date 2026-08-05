@@ -1565,7 +1565,18 @@ jobs:
             and all(to_entries[];
               .value.path == null
               and (.value.digest | test("^sha256:[0-9a-f]{64}$"))
-              and (.value.size | type == "number" and . > 0 and . <= 16777216)
+              and (.value.size | type == "number" and . > 0 and floor == .)
+              and (
+                .value.size <= (
+                  if (
+                    .key == "sbom.cdx.json"
+                    or (.key | test("^sbom-(bootstrap|certified|public)\\.cdx\\.json$"))
+                  ) then 67108864
+                  elif (.key | test("^signature-(bootstrap|certified|public)\\.json$"))
+                  then 4194304
+                  else 16777216 end
+                )
+              )
             )
           ' <<<"$sign_result" >/dev/null
           echo "RELEASE_EVIDENCE_DIR=$signed_dir" >>"$GITHUB_ENV"
