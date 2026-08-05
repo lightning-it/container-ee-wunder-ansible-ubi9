@@ -39,6 +39,10 @@ FILE_SUBJECTS = {
         for profile in ("bootstrap", "certified", "public")
     ),
 }
+CONTAINER_SBOM_SUBJECTS = {
+    "sbom.cdx.json",
+    *(f"sbom-{profile}.cdx.json" for profile in ("bootstrap", "certified", "public")),
+}
 SBOM_SUBJECT = "sbom-public.cdx.json"
 SIGNATURE_SUBJECT = "signature-public.json"
 SHA = re.compile(r"\A[0-9a-f]{40}\Z")
@@ -57,10 +61,17 @@ RFC3339 = re.compile(
 )
 FD_PATH = re.compile(r"\A/dev/fd/(?P<descriptor>[0-9]+)\Z")
 PROVENANCE_MAX_BYTES = 16 * 1024 * 1024
-SBOM_MAX_BYTES = 16 * 1024 * 1024
+ASSET_MAX_BYTES = 16 * 1024 * 1024
+SBOM_MAX_BYTES = 64 * 1024 * 1024
 SIGNATURE_MAX_BYTES = 4 * 1024 * 1024
 FILE_SUBJECT_MAX_BYTES = {
-    name: SIGNATURE_MAX_BYTES if name.startswith("signature-") else SBOM_MAX_BYTES
+    name: (
+        SIGNATURE_MAX_BYTES
+        if name.startswith("signature-")
+        else SBOM_MAX_BYTES
+        if name in CONTAINER_SBOM_SUBJECTS
+        else ASSET_MAX_BYTES
+    )
     for name in FILE_SUBJECTS
 }
 
