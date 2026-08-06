@@ -5,6 +5,10 @@ name: MLX-90 immutable release finalizer
 on:
   workflow_dispatch:
     inputs:
+      expected_main_sha:
+        description: Exact live main policy SHA that must execute the finalizer
+        required: true
+        type: string
       consumer_merge_sha:
         description: Immutable consumer merge SHA
         required: true
@@ -60,9 +64,11 @@ jobs:
           CONTAINER_PUBLISH_RUN_ATTEMPT: ${{ inputs.container_publish_run_attempt }}
           CONTAINER_RELEASE_RUN_ID: ${{ inputs.container_release_run_id }}
           CONTAINER_RELEASE_TAG: ${{ inputs.container_release_tag }}
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
           RELEASE_BODY_SHA256: ${{ inputs.release_body_sha256 }}
         run: |
           set -euo pipefail
+          [[ "$EXPECTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$CONSUMER_MERGE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$CONTAINER_RELEASE_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$CONTAINER_PUBLISH_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
@@ -72,14 +78,17 @@ jobs:
 
       - name: Bind this dispatch to the exact live main policy
         env:
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           RUN_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          [[ "$EXPECTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$RUN_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$RUN_SHA" = "$EXPECTED_MAIN_SHA"
           live_main="$(gh api "repos/${REPOSITORY}/git/ref/heads/main" --jq .object.sha)"
-          test "$live_main" = "$RUN_SHA"
+          test "$live_main" = "$EXPECTED_MAIN_SHA"
 
       - name: Checkout the immutable release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
