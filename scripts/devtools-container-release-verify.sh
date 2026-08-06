@@ -303,13 +303,13 @@ docker run --rm \
   --exit-code 1 \
   "$image_ref"
 
-echo "Generating the ${EVIDENCE_NAME} CycloneDX SBOM..."
+echo "Generating the ${EVIDENCE_NAME} CycloneDX component/license SBOM..."
 docker run --rm \
   "${trivy_container_args[@]}" \
   "${trivy_workspace_args[@]}" \
   "$trivy_image" image \
   --cache-dir /tmp/trivy-cache \
-  --scanners vuln,license \
+  --scanners license \
   --format cyclonedx \
   "${trivy_ignore_args[@]}" \
   "$image_ref" >"dist/sbom-${EVIDENCE_NAME}.cdx.json"
