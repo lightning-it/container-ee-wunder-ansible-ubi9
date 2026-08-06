@@ -2526,6 +2526,7 @@ jobs:
         if: needs.build.outputs.security_release == 'true'
         shell: bash
         env:
+          CONSUMER_TOKEN: ${{ github.token }}
           CONSUMER_MERGE_SHA: ${{ needs.build.outputs.release_sha }}
           GH_TOKEN: ${{ steps.release-app.outputs.token }}
           RELEASE_BODY_SHA256: ${{ needs.build.outputs.release_body_sha256 }}
@@ -2537,9 +2538,13 @@ jobs:
           [[ "$RELEASE_BODY_SHA256" =~ ^[0-9a-f]{64}$ ]]
           [[ "$EVIDENCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           test "$EVIDENCE_RUN_ID" = "$GITHUB_RUN_ID"
+          expected_main_sha="$(GH_TOKEN="$CONSUMER_TOKEN" gh api \
+            "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)"
+          [[ "$expected_main_sha" =~ ^[0-9a-f]{40}$ ]]
           gh workflow run security-release-finalize.yml \
             --repo "$GITHUB_REPOSITORY" \
             --ref main \
+            -f expected_main_sha="$expected_main_sha" \
             -f consumer_merge_sha="$CONSUMER_MERGE_SHA" \
             -f release_body_sha256="$RELEASE_BODY_SHA256" \
             -f container_release_id="$RELEASE_ID" \

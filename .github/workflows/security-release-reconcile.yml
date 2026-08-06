@@ -1,0 +1,237 @@
+# Managed by lightning-it/shared-assets-lit.
+# Re-dispatches only the immutable MLX-90 finalizer after exact live-state validation.
+# yamllint disable rule:truthy rule:line-length
+---
+name: MLX-90 immutable finalizer reconciliation
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Exact live main policy SHA that must perform reconciliation
+        required: true
+        type: string
+      consumer_merge_sha:
+        description: Immutable consumer release source SHA
+        required: true
+        type: string
+      release_body_sha256:
+        description: SHA-256 of the exact immutable release body
+        required: true
+        type: string
+      container_release_id:
+        description: Immutable GitHub release database ID
+        required: true
+        type: string
+      container_release_tag:
+        description: Immutable v-prefixed container release tag
+        required: true
+        type: string
+      container_release_run_id:
+        description: Successful container publisher workflow run ID
+        required: true
+        type: string
+      container_publish_run_attempt:
+        description: Successful publisher run attempt bound by the release evidence
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: mlx90-finalizer-reconciliation-${{ inputs.container_release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Validate immutable state and re-dispatch finalizer
+    if: >-
+      github.repository == 'lightning-it/container-ee-wunder-ansible-ubi9'
+      && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: security-release-acceptance
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - name: Validate exact immutable release and publisher state
+        env:
+          CONSUMER_MERGE_SHA: ${{ inputs.consumer_merge_sha }}
+          CONTAINER_PUBLISH_RUN_ATTEMPT: ${{ inputs.container_publish_run_attempt }}
+          CONTAINER_RELEASE_ID: ${{ inputs.container_release_id }}
+          CONTAINER_RELEASE_RUN_ID: ${{ inputs.container_release_run_id }}
+          CONTAINER_RELEASE_TAG: ${{ inputs.container_release_tag }}
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_BODY_SHA256: ${{ inputs.release_body_sha256 }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CONSUMER_MERGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RELEASE_BODY_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$CONTAINER_RELEASE_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CONTAINER_RELEASE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CONTAINER_PUBLISH_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$CONTAINER_RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$RUN_SHA" = "$EXPECTED_MAIN_SHA"
+
+          live_main="$(gh api "repos/${REPOSITORY}/git/ref/heads/main" --jq .object.sha)"
+          test "$live_main" = "$EXPECTED_MAIN_SHA"
+
+          ancestry="$(gh api "repos/${REPOSITORY}/compare/${CONSUMER_MERGE_SHA}...${EXPECTED_MAIN_SHA}")"
+          jq -e --arg source "$CONSUMER_MERGE_SHA" '
+            (.status == "ahead" or .status == "identical")
+            and .behind_by == 0
+            and .merge_base_commit.sha == $source
+          ' <<<"$ancestry" >/dev/null
+
+          release_receipt_blob="$(gh api \
+            "repos/${REPOSITORY}/contents/.lit/security-release-receipt.json?ref=${CONSUMER_MERGE_SHA}" \
+            --jq .sha)"
+          live_receipt_blob="$(gh api \
+            "repos/${REPOSITORY}/contents/.lit/security-release-receipt.json?ref=${EXPECTED_MAIN_SHA}" \
+            --jq .sha)"
+          [[ "$release_receipt_blob" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]
+          test "$live_receipt_blob" = "$release_receipt_blob"
+
+          release="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${REPOSITORY}/releases/${CONTAINER_RELEASE_ID}")"
+          jq -e \
+            --arg sha "$CONSUMER_MERGE_SHA" \
+            --arg tag "$CONTAINER_RELEASE_TAG" \
+            --argjson release_id "$CONTAINER_RELEASE_ID" '
+              .id == $release_id
+              and .tag_name == $tag
+              and .target_commitish == $sha
+              and .name == $tag
+              and .draft == false
+              and .prerelease == false
+              and .immutable == true
+              and (.published_at | type == "string" and length > 0)
+              and .author.login == "lightning-it-release-automation[bot]"
+            ' <<<"$release" >/dev/null
+          actual_body_sha256="$(
+            jq -jr '.body | select(type == "string")' <<<"$release" \
+              | sha256sum | awk '{print $1}'
+          )"
+          test "$actual_body_sha256" = "$RELEASE_BODY_SHA256"
+          test "$(gh api \
+            "repos/${REPOSITORY}/commits/${CONTAINER_RELEASE_TAG}" --jq .sha)" = \
+            "$CONSUMER_MERGE_SHA"
+
+          publisher="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${REPOSITORY}/actions/runs/${CONTAINER_RELEASE_RUN_ID}/attempts/${CONTAINER_PUBLISH_RUN_ATTEMPT}")"
+          jq -e \
+            --arg branch "$CONTAINER_RELEASE_TAG" \
+            --arg repository "$REPOSITORY" \
+            --arg sha "$CONSUMER_MERGE_SHA" \
+            --argjson run_attempt "$CONTAINER_PUBLISH_RUN_ATTEMPT" \
+            --argjson run_id "$CONTAINER_RELEASE_RUN_ID" '
+              .id == $run_id
+              and .run_attempt == $run_attempt
+              and .event == "workflow_dispatch"
+              and .path == ".github/workflows/container-build-publish.yml"
+              and .head_branch == $branch
+              and .head_sha == $sha
+              and .head_repository.full_name == $repository
+              and .status == "completed"
+              and .conclusion == "success"
+              and .actor.login == "lightning-it-release-automation[bot]"
+            ' <<<"$publisher" >/dev/null
+
+      - name: Mint Actions-only release automation App token
+        id: release-app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_AUTOMATION_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: container-ee-wunder-ansible-ubi9
+          permission-actions: write
+
+      - name: Verify exact App identity and repository scope
+        env:
+          APP_INSTALLATION_ID: ${{ steps.release-app.outputs.installation-id }}
+          APP_SLUG: ${{ steps.release-app.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+        run: |
+          set -euo pipefail
+          test "$APP_SLUG" = "lightning-it-release-automation"
+          test "$APP_INSTALLATION_ID" = "148019054"
+          actual_repositories="$(
+            gh api --paginate "installation/repositories?per_page=100" \
+              | jq -sc '[.[].repositories[].full_name] | sort | unique'
+          )"
+          test "$actual_repositories" = \
+            '["lightning-it/container-ee-wunder-ansible-ubi9"]'
+
+      - name: Dispatch exact immutable finalizer and verify App authorship
+        env:
+          CONSUMER_TOKEN: ${{ github.token }}
+          CONSUMER_MERGE_SHA: ${{ inputs.consumer_merge_sha }}
+          CONTAINER_PUBLISH_RUN_ATTEMPT: ${{ inputs.container_publish_run_attempt }}
+          CONTAINER_RELEASE_ID: ${{ inputs.container_release_id }}
+          CONTAINER_RELEASE_RUN_ID: ${{ inputs.container_release_run_id }}
+          CONTAINER_RELEASE_TAG: ${{ inputs.container_release_tag }}
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+          GH_TOKEN: ${{ steps.release-app.outputs.token }}
+          RELEASE_BODY_SHA256: ${{ inputs.release_body_sha256 }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          before="$(gh api --paginate --slurp \
+            "repos/${REPOSITORY}/actions/workflows/security-release-finalize.yml/runs?event=workflow_dispatch&per_page=100" \
+            | jq -c '[.[].workflow_runs[].id]')"
+          live_main="$(GH_TOKEN="$CONSUMER_TOKEN" gh api \
+            "repos/${REPOSITORY}/git/ref/heads/main" --jq .object.sha)"
+          test "$live_main" = "$EXPECTED_MAIN_SHA"
+          gh workflow run security-release-finalize.yml \
+            --repo "$REPOSITORY" \
+            --ref main \
+            -f expected_main_sha="$EXPECTED_MAIN_SHA" \
+            -f consumer_merge_sha="$CONSUMER_MERGE_SHA" \
+            -f release_body_sha256="$RELEASE_BODY_SHA256" \
+            -f container_release_id="$CONTAINER_RELEASE_ID" \
+            -f container_release_tag="$CONTAINER_RELEASE_TAG" \
+            -f container_release_run_id="$CONTAINER_RELEASE_RUN_ID" \
+            -f container_publish_run_attempt="$CONTAINER_PUBLISH_RUN_ATTEMPT"
+
+          dispatched=
+          for poll in {1..20}; do
+            candidates="$(gh api \
+              "repos/${REPOSITORY}/actions/workflows/security-release-finalize.yml/runs?event=workflow_dispatch&per_page=100" \
+              | jq -c \
+                --arg sha "$EXPECTED_MAIN_SHA" \
+                --argjson before "$before" '[.workflow_runs[] | select(
+                  (.id as $id | ($before | index($id)) == null)
+                  and .event == "workflow_dispatch"
+                  and .path == ".github/workflows/security-release-finalize.yml"
+                  and .head_branch == "main"
+                  and .head_sha == $sha
+                  and .actor.login == "lightning-it-release-automation[bot]"
+                )]')"
+            count="$(jq -r 'length' <<<"$candidates")"
+            if [ "$count" -eq 1 ]; then
+              dispatched="$(jq -c '.[0]' <<<"$candidates")"
+              break
+            fi
+            test "$count" -eq 0
+            test "$poll" -lt 20
+            sleep 2
+          done
+          test -n "$dispatched"
+          run_url="$(jq -er .html_url <<<"$dispatched")"
+          echo "Immutable finalizer dispatched by the release automation App: ${run_url}"
+          {
+            echo "### MLX-90 immutable finalizer reconciliation"
+            echo "- Finalizer run: ${run_url}"
+            echo "- Live main: ${EXPECTED_MAIN_SHA}"
+            echo "- Immutable release: ${CONTAINER_RELEASE_TAG} (${CONTAINER_RELEASE_ID})"
+          } >>"$GITHUB_STEP_SUMMARY"
