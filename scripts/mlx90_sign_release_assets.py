@@ -1128,7 +1128,7 @@ def normalize_sbom_inventory(
     vulnerabilities = inventory.pop("vulnerabilities", None)
     if has_vulnerability_enrichment and not isinstance(vulnerabilities, list):
         fail(f"{name} vulnerabilities are invalid")
-    if has_vulnerability_enrichment and not allow_legacy_vulnerability_enrichment:
+    if vulnerabilities and not allow_legacy_vulnerability_enrichment:
         fail(f"{name} unexpectedly contains vulnerability enrichment")
     return normalize_sbom(inventory, name)
 
