@@ -1115,6 +1115,24 @@ def normalize_sbom(value: Any, name: str) -> dict[str, Any]:
     return best_value
 
 
+def normalize_sbom_inventory(
+    value: Any,
+    name: str,
+    *,
+    allow_legacy_vulnerability_enrichment: bool = False,
+) -> dict[str, Any]:
+    """Canonicalize inventory while isolating legacy, mutable DB findings."""
+    sbom = require_object(value, name)
+    inventory = json.loads(json.dumps(sbom, sort_keys=True, allow_nan=False))
+    has_vulnerability_enrichment = "vulnerabilities" in inventory
+    vulnerabilities = inventory.pop("vulnerabilities", None)
+    if has_vulnerability_enrichment and not isinstance(vulnerabilities, list):
+        fail(f"{name} vulnerabilities are invalid")
+    if has_vulnerability_enrichment and not allow_legacy_vulnerability_enrichment:
+        fail(f"{name} unexpectedly contains vulnerability enrichment")
+    return normalize_sbom(inventory, name)
+
+
 def reauthenticate_profile(
     profile: str,
     payloads: dict[str, bytes],
@@ -1276,8 +1294,12 @@ def reauthenticate_profile(
         ),
         f"live {profile} SBOM",
     )
-    if normalize_sbom(live_sbom, f"live {profile} SBOM") != normalize_sbom(
-        json_values[f"sbom-{profile}.cdx.json"], f"captured {profile} SBOM"
+    if normalize_sbom_inventory(
+        live_sbom, f"live {profile} SBOM"
+    ) != normalize_sbom_inventory(
+        json_values[f"sbom-{profile}.cdx.json"],
+        f"captured {profile} SBOM",
+        allow_legacy_vulnerability_enrichment=True,
     ):
         fail(f"{profile} SBOM capture differs from a live pinned-image scan")
 
