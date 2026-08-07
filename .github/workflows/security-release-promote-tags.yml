@@ -930,24 +930,82 @@ jobs:
               $'D\t.lit/security-release-receipt.json'
             head_sha="$branch_sha"
           else
-            git config user.name "$APP_LOGIN"
-            git config user.email "$APP_EMAIL"
-            head_sha="$(git commit-tree "$expected_candidate_tree" \
-              -p "$MAIN_SHA" \
-              -m "chore(security): retire ${EVIDENCE_ID} receipt" \
-              -m "Final-Acceptance-URL: ${ACCEPTANCE_URL}" \
-              -m "Final-Acceptance-SHA256: ${ACCEPTANCE_DIGEST}" \
-              -m "Security-Base-SHA: ${MAIN_SHA}")"
+            commit_message="$(printf '%s\n\n%s\n\n%s\n\n%s' \
+              "chore(security): retire ${EVIDENCE_ID} receipt" \
+              "Final-Acceptance-URL: ${ACCEPTANCE_URL}" \
+              "Final-Acceptance-SHA256: ${ACCEPTANCE_DIGEST}" \
+              "Security-Base-SHA: ${MAIN_SHA}")"
+            tree_payload="$(jq -cn \
+              --arg base "$EXPECTED_BASE_TREE" '
+                {
+                  base_tree: $base,
+                  tree: [{
+                    path: ".lit/security-release-receipt.json",
+                    mode: "100644",
+                    type: "blob",
+                    sha: null
+                  }]
+                }
+              ')"
+            created_tree="$(gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/git/trees" \
+              --input - <<<"$tree_payload")"
+            api_candidate_tree="$(jq -er '.sha' <<<"$created_tree")"
+            test "$api_candidate_tree" = "$expected_candidate_tree"
+            commit_payload="$(jq -cn \
+              --arg email "$APP_EMAIL" \
+              --arg message "$commit_message" \
+              --arg name "$APP_LOGIN" \
+              --arg parent "$MAIN_SHA" \
+              --arg tree "$api_candidate_tree" '
+                {
+                  message: $message,
+                  tree: $tree,
+                  parents: [$parent],
+                  author: {name: $name, email: $email},
+                  committer: {name: $name, email: $email}
+                }
+              ')"
+            created_commit="$(gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/git/commits" \
+              --input - <<<"$commit_payload")"
+            head_sha="$(jq -er '.sha' <<<"$created_commit")"
             [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]
-            test "$(git rev-parse "${head_sha}^")" = "$MAIN_SHA"
-            test "$(git rev-parse "${head_sha}^{tree}")" = \
-              "$expected_candidate_tree"
-            test "$(git diff --name-status "$MAIN_SHA" "$head_sha")" = \
-              $'D\t.lit/security-release-receipt.json'
+            jq -e \
+              --arg email "$APP_EMAIL" \
+              --arg head "$head_sha" \
+              --arg message "$commit_message" \
+              --arg name "$APP_LOGIN" \
+              --arg parent "$MAIN_SHA" \
+              --arg tree "$expected_candidate_tree" '
+                .sha == $head
+                and .message == $message
+                and .tree.sha == $tree
+                and [.parents[].sha] == [$parent]
+                and .author.name == $name
+                and .author.email == $email
+                and .committer.name == $name
+                and .committer.email == $email
+              ' <<<"$created_commit" >/dev/null
             live_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
               --jq .object.sha)"
             test "$live_main" = "$MAIN_SHA"
-            git push origin "${head_sha}:refs/heads/${BRANCH}"
+            ref_payload="$(jq -cn \
+              --arg ref "refs/heads/${BRANCH}" \
+              --arg sha "$head_sha" '{ref: $ref, sha: $sha}')"
+            created_ref="$(gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/git/refs" \
+              --input - <<<"$ref_payload")"
+            jq -e \
+              --arg head "$head_sha" \
+              --arg ref "refs/heads/${BRANCH}" '
+                .ref == $ref
+                and .object.type == "commit"
+                and .object.sha == $head
+              ' <<<"$created_ref" >/dev/null
+            test "$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BRANCH}" \
+              --jq .object.sha)" = "$head_sha"
           fi
           prs="$(gh pr list --repo "$GITHUB_REPOSITORY" --state all \
             --head "$BRANCH" --json number,state,headRefOid,baseRefName,url)"
