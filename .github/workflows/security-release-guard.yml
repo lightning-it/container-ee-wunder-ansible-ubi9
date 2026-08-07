@@ -583,6 +583,7 @@ jobs:
           ACCEPTANCE_URL: ${{ steps.live.outputs.acceptance_url }}
           ACCEPTANCE_TOKEN: ${{ steps.acceptance-app.outputs.token }}
           BASE_SHA: ${{ steps.live.outputs.main_sha }}
+          CONTAINER_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ steps.live.outputs.head_sha }}
           HEAD_REF: ${{ steps.live.outputs.head_ref }}
           PRODUCER_TOKEN: ${{ steps.producer-app.outputs.token }}
@@ -1006,6 +1007,7 @@ jobs:
             ' "$acceptance" >/dev/null
           consumer_head="$(jq -er '.consumerHeadSha' <<<"$cleanup_result")"
           consumer_merge="$(jq -er '.consumerMergeSha' <<<"$cleanup_result")"
+          consumer_pull_request="$(jq -er '.consumerPullRequest' <<<"$cleanup_result")"
           run_id="$(jq -er '.finalizerRunId' <<<"$cleanup_result")"
           run_attempt="$(jq -er '.finalizerRunAttempt' <<<"$cleanup_result")"
           run_url="$(jq -er '.finalizerRunUrl' <<<"$cleanup_result")"
@@ -1026,6 +1028,23 @@ jobs:
               and (.run_attempt | tostring) == $run_attempt
               and .html_url == $run_url
             ' <<<"$run" >/dev/null
+          [[ "$consumer_pull_request" =~ ^[1-9][0-9]*$ ]]
+          export GH_TOKEN="$CONTAINER_TOKEN"
+          consumer_pr="$(gh api \
+            "repos/${REPOSITORY}/pulls/${consumer_pull_request}")"
+          consumer_pr_merge="$(jq -er '.merge_commit_sha' <<<"$consumer_pr")"
+          [[ "$consumer_pr_merge" =~ ^[0-9a-f]{40}$ ]]
+          jq -e \
+            --arg head "$consumer_head" \
+            --arg merge "$consumer_pr_merge" \
+            --argjson number "$consumer_pull_request" '
+              .number == $number
+              and .state == "closed"
+              and .merged == true
+              and .base.ref == "main"
+              and .head.sha == $head
+              and .merge_commit_sha == $merge
+            ' <<<"$consumer_pr" >/dev/null
           jq -S 'del(.status, .delivery)' "$delivered" \
             >"$acceptance_dir/delivered-core.json"
           jq -S 'del(.status, .delivery)' \
@@ -1047,7 +1066,10 @@ jobs:
               and .delivery.acceptanceRunUrl == $run_url
             ' "$delivered" >/dev/null
           git -C ../policy merge-base --is-ancestor "$consumer_merge" "$BASE_SHA"
-          read -r -a merge_parents <<<"$(git -C ../policy show -s --format='%P' "$consumer_merge")"
+          git -C ../policy merge-base --is-ancestor \
+            "$consumer_pr_merge" "$consumer_merge"
+          read -r -a merge_parents <<<"$(git -C ../policy show -s \
+            --format='%P' "$consumer_pr_merge")"
           test "${#merge_parents[@]}" -eq 2
           test "${merge_parents[0]}" = "$receipt_base_sha"
           test "${merge_parents[1]}" = "$consumer_head"
