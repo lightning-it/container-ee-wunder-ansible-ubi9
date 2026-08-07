@@ -911,7 +911,8 @@ jobs:
             "100644 ${EXPECTED_RECEIPT_BLOB} 0"$'\t''.lit/security-release-receipt.json'
           GIT_INDEX_FILE="$cleanup_index" git update-index --force-remove -- \
             .lit/security-release-receipt.json
-          expected_candidate_tree="$(GIT_INDEX_FILE="$cleanup_index" git write-tree)"
+          expected_candidate_tree="$(GIT_INDEX_FILE="$cleanup_index" \
+            git write-tree --missing-ok)"
           [[ "$expected_candidate_tree" =~ ^[0-9a-f]{40}$ ]]
           test "$expected_candidate_tree" != "$EXPECTED_BASE_TREE"
           rm -f -- "$cleanup_index"
