@@ -900,42 +900,24 @@ jobs:
           test "$(git rev-parse \
             "${MAIN_SHA}:collections/requirements-base.yml")" = \
             "$EXPECTED_REQUIREMENTS_BLOB"
-          index_root="$(mktemp -d "${RUNNER_TEMP:?}/mlx90-cleanup-index.XXXXXX")"
-          chmod 0700 "$index_root"
-          cleanup_index="${index_root}/index"
-          trap 'rm -f -- "$cleanup_index"; rmdir -- "$index_root"' EXIT
-          GIT_INDEX_FILE="$cleanup_index" git read-tree "$EXPECTED_BASE_TREE"
-          receipt_stage="$(GIT_INDEX_FILE="$cleanup_index" git ls-files \
-            --stage -- .lit/security-release-receipt.json)"
-          test "$receipt_stage" = \
-            "100644 ${EXPECTED_RECEIPT_BLOB} 0"$'\t''.lit/security-release-receipt.json'
-          GIT_INDEX_FILE="$cleanup_index" git update-index --force-remove -- \
-            .lit/security-release-receipt.json
-          expected_candidate_tree="$(GIT_INDEX_FILE="$cleanup_index" \
-            git write-tree --missing-ok)"
-          [[ "$expected_candidate_tree" =~ ^[0-9a-f]{40}$ ]]
-          test "$expected_candidate_tree" != "$EXPECTED_BASE_TREE"
-          rm -f -- "$cleanup_index"
-          rmdir -- "$index_root"
-          trap - EXIT
+          commit_message="$(printf '%s\n\n%s\n\n%s\n\n%s' \
+            "chore(security): retire ${EVIDENCE_ID} receipt" \
+            "Final-Acceptance-URL: ${ACCEPTANCE_URL}" \
+            "Final-Acceptance-SHA256: ${ACCEPTANCE_DIGEST}" \
+            "Security-Base-SHA: ${MAIN_SHA}")"
+          live_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
+            --jq .object.sha)"
+          test "$live_main" = "$MAIN_SHA"
           branch_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BRANCH}" \
             --jq .object.sha 2>/dev/null || true)"
           if [ -n "$branch_sha" ]; then
             [[ "$branch_sha" =~ ^[0-9a-f]{40}$ ]]
-            git fetch origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
-            test "$(git rev-list --count "${MAIN_SHA}..${branch_sha}")" -eq 1
-            test "$(git rev-parse "${branch_sha}^")" = "$MAIN_SHA"
-            test "$(git rev-parse "${branch_sha}^{tree}")" = \
-              "$expected_candidate_tree"
-            test "$(git diff --name-status "$MAIN_SHA" "$branch_sha")" = \
-              $'D\t.lit/security-release-receipt.json'
             head_sha="$branch_sha"
           else
-            commit_message="$(printf '%s\n\n%s\n\n%s\n\n%s' \
-              "chore(security): retire ${EVIDENCE_ID} receipt" \
-              "Final-Acceptance-URL: ${ACCEPTANCE_URL}" \
-              "Final-Acceptance-SHA256: ${ACCEPTANCE_DIGEST}" \
-              "Security-Base-SHA: ${MAIN_SHA}")"
+            # Do not create even an unreferenced tree unless main is still exact.
+            test "$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
+              --jq .object.sha)" = "$MAIN_SHA"
             tree_payload="$(jq -cn \
               --arg base "$EXPECTED_BASE_TREE" '
                 {
@@ -952,7 +934,8 @@ jobs:
               "repos/${GITHUB_REPOSITORY}/git/trees" \
               --input - <<<"$tree_payload")"
             api_candidate_tree="$(jq -er '.sha' <<<"$created_tree")"
-            test "$api_candidate_tree" = "$expected_candidate_tree"
+            [[ "$api_candidate_tree" =~ ^[0-9a-f]{40}$ ]]
+            test "$api_candidate_tree" != "$EXPECTED_BASE_TREE"
             commit_payload="$(jq -cn \
               --arg email "$APP_EMAIL" \
               --arg message "$commit_message" \
@@ -978,7 +961,7 @@ jobs:
               --arg message "$commit_message" \
               --arg name "$APP_LOGIN" \
               --arg parent "$MAIN_SHA" \
-              --arg tree "$expected_candidate_tree" '
+              --arg tree "$api_candidate_tree" '
                 .sha == $head
                 and .message == $message
                 and .tree.sha == $tree
@@ -988,9 +971,13 @@ jobs:
                 and .committer.name == $name
                 and .committer.email == $email
               ' <<<"$created_commit" >/dev/null
-            live_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
-              --jq .object.sha)"
-            test "$live_main" = "$MAIN_SHA"
+            # Close the main/ref TOCTOU window with a precondition and a
+            # postcondition. If main moves during ref creation, stop before
+            # opening a PR and leave the exact ref for human-on-exception
+            # inspection; the delete-ref API has no compare-and-delete guard.
+            test "$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
+              --jq .object.sha)" = "$MAIN_SHA"
             ref_payload="$(jq -cn \
               --arg ref "refs/heads/${BRANCH}" \
               --arg sha "$head_sha" '{ref: $ref, sha: $sha}')"
@@ -1007,7 +994,54 @@ jobs:
             test "$(gh api \
               "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BRANCH}" \
               --jq .object.sha)" = "$head_sha"
+            live_main_after_ref="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
+              --jq .object.sha)"
+            if [ "$live_main_after_ref" != "$MAIN_SHA" ]; then
+              echo "main advanced while the cleanup ref was created" >&2
+              exit 1
+            fi
           fi
+          exact_commit="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/git/commits/${head_sha}")"
+          api_candidate_tree="$(jq -er '.tree.sha' <<<"$exact_commit")"
+          [[ "$api_candidate_tree" =~ ^[0-9a-f]{40}$ ]]
+          test "$api_candidate_tree" != "$EXPECTED_BASE_TREE"
+          jq -e \
+            --arg email "$APP_EMAIL" \
+            --arg head "$head_sha" \
+            --arg message "$commit_message" \
+            --arg name "$APP_LOGIN" \
+            --arg parent "$MAIN_SHA" \
+            --arg tree "$api_candidate_tree" '
+              .sha == $head
+              and .message == $message
+              and .tree.sha == $tree
+              and [.parents[].sha] == [$parent]
+              and .author.name == $name
+              and .author.email == $email
+              and .committer.name == $name
+              and .committer.email == $email
+            ' <<<"$exact_commit" >/dev/null
+          comparison="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/compare/${MAIN_SHA}...${head_sha}")"
+          jq -e \
+            --arg base "$MAIN_SHA" \
+            --arg head "$head_sha" '
+              .status == "ahead"
+              and .ahead_by == 1
+              and .behind_by == 0
+              and .total_commits == 1
+              and .merge_base_commit.sha == $base
+              and [.commits[].sha] == [$head]
+              and (.files | length) == 1
+              and .files[0].filename == ".lit/security-release-receipt.json"
+              and .files[0].status == "removed"
+              and .files[0].previous_filename == null
+              and .files[0].additions == 0
+              and .files[0].deletions > 0
+              and .files[0].changes == .files[0].deletions
+            ' <<<"$comparison" >/dev/null
           prs="$(gh pr list --repo "$GITHUB_REPOSITORY" --state all \
             --head "$BRANCH" --json number,state,headRefOid,baseRefName,url)"
           pr_count="$(jq 'length' <<<"$prs")"
