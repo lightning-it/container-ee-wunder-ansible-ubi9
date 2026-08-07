@@ -908,11 +908,18 @@ jobs:
           live_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" \
             --jq .object.sha)"
           test "$live_main" = "$MAIN_SHA"
-          branch_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BRANCH}" \
-            --jq .object.sha 2>/dev/null || true)"
-          if [ -n "$branch_sha" ]; then
-            [[ "$branch_sha" =~ ^[0-9a-f]{40}$ ]]
-            head_sha="$branch_sha"
+          branch_refs="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/git/matching-refs/heads/${BRANCH}")"
+          branch_count="$(jq 'length' <<<"$branch_refs")"
+          test "$branch_count" -le 1
+          if [ "$branch_count" -eq 1 ]; then
+            jq -e \
+              --arg ref "refs/heads/${BRANCH}" '
+                .[0].ref == $ref
+                and .[0].object.type == "commit"
+                and (.[0].object.sha | test("^[0-9a-f]{40}$"))
+              ' <<<"$branch_refs" >/dev/null
+            head_sha="$(jq -er '.[0].object.sha' <<<"$branch_refs")"
           else
             # Do not create even an unreferenced tree unless main is still exact.
             test "$(gh api \
