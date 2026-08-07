@@ -144,7 +144,6 @@ jobs:
           APP_INSTALLATION_ID: ${{ steps.acceptance-app.outputs.installation-id }}
           APP_SLUG: ${{ steps.acceptance-app.outputs.app-slug }}
           GH_TOKEN: ${{ steps.acceptance-app.outputs.token }}
-          OBJECT_FORMAT: ${{ steps.acceptance-tools.outputs.object_format }}
         run: |
           set -euo pipefail
           test "$APP_SLUG" = "lightning-it-release-automation"
@@ -166,6 +165,7 @@ jobs:
           CONSUMER_MERGE_SHA: ${{ inputs.consumer_merge_sha }}
           CONTAINER_RELEASE_TAG: ${{ inputs.container_release_tag }}
           GH_TOKEN: ${{ steps.acceptance-app.outputs.token }}
+          OBJECT_FORMAT: ${{ steps.acceptance-tools.outputs.object_format }}
           QUAY_NAMESPACE: ${{ vars.QUAY_NAMESPACE }}
           SECURE_FILES_OID: ${{ steps.acceptance-tools.outputs.secure_files_oid }}
           SECURE_FILES_PATH: ${{ steps.acceptance-tools.outputs.secure_files_path }}
