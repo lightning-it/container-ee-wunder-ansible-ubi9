@@ -568,7 +568,13 @@ def validate_cleanup(
     delivered_core = dict(delivered)
     delivered_core.pop("status", None)
     delivered_core.pop("delivery", None)
-    if delivered_core != evidence or delivered.get("status") != "delivered":
+    evidence_core = dict(evidence)
+    evidence_core.pop("status", None)
+    if evidence.get("status") != "approved":
+        fail("signed producer evidence is not approved")
+    if delivered.get("status") != "delivered":
+        fail("delivered producer evidence is not delivered")
+    if delivered_core != evidence_core:
         fail("delivered producer evidence does not exactly extend signed evidence")
     if (
         delivery["consumerRepository"] != CONSUMER
