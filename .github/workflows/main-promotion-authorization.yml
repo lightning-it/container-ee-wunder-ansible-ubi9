@@ -158,7 +158,11 @@ jobs:
               live-pull.json >/dev/null
             tree="$(gh api "repos/${REPOSITORY}/git/trees/${EVENT_HEAD_SHA}?recursive=1")"
             jq -e '.truncated == false' <<<"$tree" >/dev/null
-            root_script="$(jq -er '.tree[] | select(.path == "scripts/main-promotion-authorization.py" and .type == "blob" and .mode == "100755") | .sha' <<<"$tree")"
+            script_mode=100755
+            if [ "$REPOSITORY" = lightning-it/ansible-collection-supplementary ]; then
+              script_mode=100644
+            fi
+            root_script="$(jq -er --arg mode "$script_mode" '.tree[] | select(.path == "scripts/main-promotion-authorization.py" and .type == "blob" and .mode == $mode) | .sha' <<<"$tree")"
             root_workflow="$(jq -er '.tree[] | select(.path == ".github/workflows/main-promotion-authorization.yml" and .type == "blob" and .mode == "100644") | .sha' <<<"$tree")"
             test -n "$root_script"
             test -n "$root_workflow"
