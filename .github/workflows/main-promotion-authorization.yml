@@ -1,0 +1,207 @@
+# Managed by lightning-it/shared-assets-lit.
+# Normal main promotions require a protected human environment approval.
+# Only exact App-authored MLX-90 Security branches use the reviewer-free path.
+# yamllint disable rule:truthy rule:line-length
+---
+name: Main promotion authorization
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: main-promotion-authorization-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  classify:
+    name: Classify protected main promotion
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # GET /repos/{owner}/{repo}/environments/{name} requires Actions: read.
+      # https://docs.github.com/rest/deployments/environments#get-an-environment
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      bootstrap: ${{ steps.classify.outputs.bootstrap }}
+      environment: ${{ steps.classify.outputs.environment }}
+      head_ref: ${{ steps.classify.outputs.head_ref }}
+      head_sha: ${{ steps.classify.outputs.head_sha }}
+      mode: ${{ steps.classify.outputs.mode }}
+
+    steps:
+      - name: Checkout immutable policy from the event base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: policy
+          persist-credentials: false
+
+      - name: Classify exact live pull request
+        id: classify
+        env:
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" >live-pull.json
+          if [ ! -e policy/scripts/main-promotion-authorization.py ] \
+            && [ ! -e policy/.github/workflows/main-promotion-authorization.yml ]; then
+            jq -e \
+              --arg base "$EVENT_BASE_SHA" \
+              --arg head "$EVENT_HEAD_SHA" \
+              --arg repo "$REPOSITORY" \
+              '(.state == "open") and (.draft == false)
+               and (.base.ref == "main") and (.base.sha == $base)
+               and (.head.ref == "develop") and (.head.sha == $head)
+               and (.head.repo.full_name == $repo)' \
+              live-pull.json >/dev/null
+            gh api \
+              "repos/${REPOSITORY}/environments/normal-release-promotion-approval" \
+              >live-environment.json
+            jq -e '
+              (.name == "normal-release-promotion-approval")
+              and (.can_admins_bypass == false)
+              and ([.protection_rules[]? | select(.type == "wait_timer")] | length == 0)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")] | length == 1)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == true)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length == 1)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers[0].type == "BusinessTeam")
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers[0].reviewer.id == 15545798)
+            ' live-environment.json >/dev/null
+            {
+              echo 'bootstrap=true'
+              echo 'mode=normal'
+              echo 'environment=normal-release-promotion-approval'
+              echo 'head_ref=develop'
+              echo "head_sha=${EVENT_HEAD_SHA}"
+            } >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          test -f policy/scripts/main-promotion-authorization.py
+          test -f policy/.github/workflows/main-promotion-authorization.yml
+          classification="$(python3 policy/scripts/main-promotion-authorization.py \
+            --pull live-pull.json \
+            --repository "$REPOSITORY" \
+            --expected-base "$EVENT_BASE_SHA" \
+            --expected-head "$EVENT_HEAD_SHA" \
+            --classification-only)"
+          environment="$(jq -er .environment <<<"$classification")"
+          gh api "repos/${REPOSITORY}/environments/${environment}" \
+            >live-environment.json
+          python3 policy/scripts/main-promotion-authorization.py \
+            --pull live-pull.json \
+            --environment live-environment.json \
+            --repository "$REPOSITORY" \
+            --expected-base "$EVENT_BASE_SHA" \
+            --expected-head "$EVENT_HEAD_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+          echo 'bootstrap=false' >>"$GITHUB_OUTPUT"
+
+  authorize:
+    name: Authorize protected main promotion
+    needs: classify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: ${{ needs.classify.outputs.environment }}
+    permissions:
+      # Revalidate the live environment after its protected approval.
+      actions: read
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Checkout immutable policy from the event base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: policy
+          persist-credentials: false
+
+      - name: Revalidate exact live state after authorization
+        env:
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_MODE: ${{ needs.classify.outputs.mode }}
+          BOOTSTRAP: ${{ needs.classify.outputs.bootstrap }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" >live-pull.json
+          gh api \
+            "repos/${REPOSITORY}/environments/${{ needs.classify.outputs.environment }}" \
+            >live-environment.json
+          if [ "$BOOTSTRAP" = true ]; then
+            test "$EXPECTED_MODE" = normal
+            test ! -e policy/scripts/main-promotion-authorization.py
+            test ! -e policy/.github/workflows/main-promotion-authorization.yml
+            jq -e \
+              --arg base "$EVENT_BASE_SHA" \
+              --arg head "$EVENT_HEAD_SHA" \
+              --arg repo "$REPOSITORY" \
+              '(.state == "open") and (.draft == false)
+               and (.base.ref == "main") and (.base.sha == $base)
+               and (.head.ref == "develop") and (.head.sha == $head)
+               and (.head.repo.full_name == $repo)' \
+              live-pull.json >/dev/null
+            tree="$(gh api "repos/${REPOSITORY}/git/trees/${EVENT_HEAD_SHA}?recursive=1")"
+            jq -e '.truncated == false' <<<"$tree" >/dev/null
+            script_mode=100755
+            if [ "$REPOSITORY" = lightning-it/ansible-collection-supplementary ]; then
+              script_mode=100644
+            fi
+            root_script="$(jq -er --arg mode "$script_mode" '.tree[] | select(.path == "scripts/main-promotion-authorization.py" and .type == "blob" and .mode == $mode) | .sha' <<<"$tree")"
+            root_workflow="$(jq -er '.tree[] | select(.path == ".github/workflows/main-promotion-authorization.yml" and .type == "blob" and .mode == "100644") | .sha' <<<"$tree")"
+            test -n "$root_script"
+            test -n "$root_workflow"
+            if [ "$REPOSITORY" = lightning-it/shared-assets-lit ]; then
+              default_script="$(jq -er '.tree[] | select(.path == "default/scripts/main-promotion-authorization.py" and .type == "blob" and .mode == "100755") | .sha' <<<"$tree")"
+              default_workflow="$(jq -er '.tree[] | select(.path == "default/.github/workflows/main-promotion-authorization.yml" and .type == "blob" and .mode == "100644") | .sha' <<<"$tree")"
+              test "$root_script" = "$default_script"
+              test "$root_workflow" = "$default_workflow"
+            fi
+            jq -e '
+              (.name == "normal-release-promotion-approval")
+              and (.can_admins_bypass == false)
+              and ([.protection_rules[]? | select(.type == "wait_timer")] | length == 0)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")] | length == 1)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == true)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length == 1)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers[0].type == "BusinessTeam")
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers[0].reviewer.id == 15545798)
+            ' live-environment.json >/dev/null
+          else
+            test "$BOOTSTRAP" = false
+            python3 policy/scripts/main-promotion-authorization.py \
+              --pull live-pull.json \
+              --environment live-environment.json \
+              --repository "$REPOSITORY" \
+              --expected-base "$EVENT_BASE_SHA" \
+              --expected-head "$EVENT_HEAD_SHA" \
+              --expected-mode "$EXPECTED_MODE"
+          fi
+          {
+            echo '### Protected main promotion authorization'
+            echo
+            echo "- Mode: \`${EXPECTED_MODE}\`"
+            echo "- Head: \`${EVENT_HEAD_SHA}\`"
+            if [ "$EXPECTED_MODE" = security ]; then
+              echo '- Approval: deterministic MLX-90 Security exception; human actions: 0'
+            elif [ "$BOOTSTRAP" = true ]; then
+              echo '- Approval: one-time trust-root bootstrap through the protected human environment'
+            else
+              echo '- Approval: protected human environment approval completed'
+            fi
+          } >>"$GITHUB_STEP_SUMMARY"
