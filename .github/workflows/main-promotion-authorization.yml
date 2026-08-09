@@ -205,3 +205,21 @@ jobs:
               echo '- Approval: protected human environment approval completed'
             fi
           } >>"$GITHUB_STEP_SUMMARY"
+
+  merge-gate:
+    name: Main promotion merge gate
+    if: ${{ always() }}
+    needs: [classify, authorize]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+
+    steps:
+      - name: Require successful protected authorization
+        env:
+          AUTHORIZE_RESULT: ${{ needs.authorize.result }}
+          CLASSIFY_RESULT: ${{ needs.classify.result }}
+        run: |
+          set -euo pipefail
+          test "$CLASSIFY_RESULT" = success
+          test "$AUTHORIZE_RESULT" = success
