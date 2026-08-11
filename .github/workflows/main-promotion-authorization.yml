@@ -33,6 +33,7 @@ jobs:
       environment: ${{ steps.classify.outputs.environment }}
       head_ref: ${{ steps.classify.outputs.head_ref }}
       head_sha: ${{ steps.classify.outputs.head_sha }}
+      migration: ${{ steps.classify.outputs.migration }}
       mode: ${{ steps.classify.outputs.mode }}
 
     steps:
@@ -49,11 +50,26 @@ jobs:
           EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ github.token }}
+          MIGRATION_BASE_SHA: 62a7b38bc7a57098ed8aef5872b4b03c32856a9a
+          MIGRATION_BASE_SCRIPT_BLOB: 12852af58e0ccd0c2b5e6f7517a2ed9cb298cf84
+          MIGRATION_BASE_WORKFLOW_BLOB: 0e7792d63d925fc88a22f8904d2959d8bfdd356d
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" >live-pull.json
+          validate_normal_environment() {
+            jq -e '
+              (.name == "normal-release-promotion-approval")
+              and (.can_admins_bypass == false)
+              and ([.protection_rules[]? | select(.type == "wait_timer")] | length == 0)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")] | length == 1)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == false)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length == 1)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers[0].type == "BusinessTeam")
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers[0].reviewer.id == 15545798)
+            ' live-environment.json >/dev/null
+          }
           if [ ! -e policy/scripts/main-promotion-authorization.py ] \
             && [ ! -e policy/.github/workflows/main-promotion-authorization.yml ]; then
             jq -e \
@@ -68,18 +84,56 @@ jobs:
             gh api \
               "repos/${REPOSITORY}/environments/normal-release-promotion-approval" \
               >live-environment.json
-            jq -e '
-              (.name == "normal-release-promotion-approval")
-              and (.can_admins_bypass == false)
-              and ([.protection_rules[]? | select(.type == "wait_timer")] | length == 0)
-              and ([.protection_rules[]? | select(.type == "required_reviewers")] | length == 1)
-              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == false)
-              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length == 1)
-              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers[0].type == "BusinessTeam")
-              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers[0].reviewer.id == 15545798)
-            ' live-environment.json >/dev/null
+            validate_normal_environment
             {
               echo 'bootstrap=true'
+              echo 'migration=false'
+              echo 'mode=normal'
+              echo 'environment=normal-release-promotion-approval'
+              echo 'head_ref=develop'
+              echo "head_sha=${EVENT_HEAD_SHA}"
+            } >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          base_script="$(git -C policy ls-tree \
+            --format='%(objectmode):%(objecttype):%(objectname)' \
+            "$EVENT_BASE_SHA" -- scripts/main-promotion-authorization.py)"
+          base_workflow="$(git -C policy ls-tree \
+            --format='%(objectmode):%(objecttype):%(objectname)' \
+            "$EVENT_BASE_SHA" -- .github/workflows/main-promotion-authorization.yml)"
+          if [ "$REPOSITORY" = lightning-it/github-management-lit ] \
+            && [ "$EVENT_BASE_SHA" = "$MIGRATION_BASE_SHA" ] \
+            && [ "$base_script" = "100755:blob:${MIGRATION_BASE_SCRIPT_BLOB}" ] \
+            && [ "$base_workflow" = "100644:blob:${MIGRATION_BASE_WORKFLOW_BLOB}" ]; then
+            jq -e \
+              --arg base "$EVENT_BASE_SHA" \
+              --arg head "$EVENT_HEAD_SHA" \
+              --arg repo "$REPOSITORY" \
+              '(.state == "open") and (.draft == false)
+               and (.base.ref == "main") and (.base.sha == $base)
+               and (.head.ref == "develop") and (.head.sha == $head)
+               and (.head.repo.full_name == $repo)' \
+              live-pull.json >/dev/null
+            gh api \
+              "repos/${REPOSITORY}/environments/normal-release-promotion-approval" \
+              >live-environment.json
+            gh api \
+              "repos/${REPOSITORY}/environments/normal-release-promotion-approval/deployment-branch-policies" \
+              >live-branch-policies.json
+            validate_normal_environment
+            jq -e '
+              (.deployment_branch_policy.protected_branches == false)
+              and (.deployment_branch_policy.custom_branch_policies == true)
+            ' live-environment.json >/dev/null
+            jq -e '
+              (.total_count == 1)
+              and (.branch_policies | length == 1)
+              and (.branch_policies[0].type == "branch")
+              and (.branch_policies[0].name == "refs/pull/*/merge")
+            ' live-branch-policies.json >/dev/null
+            {
+              echo 'bootstrap=false'
+              echo 'migration=true'
               echo 'mode=normal'
               echo 'environment=normal-release-promotion-approval'
               echo 'head_ref=develop'
@@ -106,6 +160,7 @@ jobs:
             --expected-head "$EVENT_HEAD_SHA" \
             --github-output "$GITHUB_OUTPUT"
           echo 'bootstrap=false' >>"$GITHUB_OUTPUT"
+          echo 'migration=false' >>"$GITHUB_OUTPUT"
 
   authorize:
     name: Authorize protected main promotion
@@ -135,6 +190,13 @@ jobs:
           EXPECTED_MODE: ${{ needs.classify.outputs.mode }}
           BOOTSTRAP: ${{ needs.classify.outputs.bootstrap }}
           GH_TOKEN: ${{ github.token }}
+          MIGRATION: ${{ needs.classify.outputs.migration }}
+          MIGRATION_BASE_SHA: 62a7b38bc7a57098ed8aef5872b4b03c32856a9a
+          MIGRATION_BASE_SCRIPT_BLOB: 12852af58e0ccd0c2b5e6f7517a2ed9cb298cf84
+          MIGRATION_BASE_WORKFLOW_BLOB: 0e7792d63d925fc88a22f8904d2959d8bfdd356d
+          MIGRATION_EXPECTED_HEAD_SHA: ${{ vars.MAIN_PROMOTION_MIGRATION_HEAD_SHA }}
+          MIGRATION_EXPECTED_SCRIPT_BLOB: 351ba3b0e8573b99e764ce288ce374d068d88f45
+          MIGRATION_EXPECTED_WORKFLOW_BLOB: ${{ vars.MAIN_PROMOTION_MIGRATION_WORKFLOW_BLOB }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPOSITORY: ${{ github.repository }}
         run: |
@@ -143,6 +205,18 @@ jobs:
           gh api \
             "repos/${REPOSITORY}/environments/${{ needs.classify.outputs.environment }}" \
             >live-environment.json
+          validate_normal_environment() {
+            jq -e '
+              (.name == "normal-release-promotion-approval")
+              and (.can_admins_bypass == false)
+              and ([.protection_rules[]? | select(.type == "wait_timer")] | length == 0)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")] | length == 1)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == false)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length == 1)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers[0].type == "BusinessTeam")
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers[0].reviewer.id == 15545798)
+            ' live-environment.json >/dev/null
+          }
           if [ "$BOOTSTRAP" = true ]; then
             test "$EXPECTED_MODE" = normal
             test ! -e policy/scripts/main-promotion-authorization.py
@@ -172,18 +246,55 @@ jobs:
               test "$root_script" = "$default_script"
               test "$root_workflow" = "$default_workflow"
             fi
+            validate_normal_environment
+          elif [ "$MIGRATION" = true ]; then
+            test "$BOOTSTRAP" = false
+            test "$EXPECTED_MODE" = normal
+            test "$REPOSITORY" = lightning-it/github-management-lit
+            test "$EVENT_BASE_SHA" = "$MIGRATION_BASE_SHA"
+            [[ "$MIGRATION_EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$MIGRATION_EXPECTED_WORKFLOW_BLOB" =~ ^[0-9a-f]{40}$ ]]
+            test "$MIGRATION_EXPECTED_HEAD_SHA" = "$EVENT_HEAD_SHA"
+            base_script="$(git -C policy ls-tree \
+              --format='%(objectmode):%(objecttype):%(objectname)' \
+              "$EVENT_BASE_SHA" -- scripts/main-promotion-authorization.py)"
+            base_workflow="$(git -C policy ls-tree \
+              --format='%(objectmode):%(objecttype):%(objectname)' \
+              "$EVENT_BASE_SHA" -- .github/workflows/main-promotion-authorization.yml)"
+            test "$base_script" = "100755:blob:${MIGRATION_BASE_SCRIPT_BLOB}"
+            test "$base_workflow" = "100644:blob:${MIGRATION_BASE_WORKFLOW_BLOB}"
+            jq -e \
+              --arg base "$EVENT_BASE_SHA" \
+              --arg head "$EVENT_HEAD_SHA" \
+              --arg repo "$REPOSITORY" \
+              '(.state == "open") and (.draft == false)
+               and (.base.ref == "main") and (.base.sha == $base)
+               and (.head.ref == "develop") and (.head.sha == $head)
+               and (.head.repo.full_name == $repo)' \
+              live-pull.json >/dev/null
+            tree="$(gh api "repos/${REPOSITORY}/git/trees/${EVENT_HEAD_SHA}?recursive=1")"
+            jq -e '.truncated == false' <<<"$tree" >/dev/null
+            head_script="$(jq -er '.tree[] | select(.path == "scripts/main-promotion-authorization.py" and .type == "blob" and .mode == "100755") | .sha' <<<"$tree")"
+            head_workflow="$(jq -er '.tree[] | select(.path == ".github/workflows/main-promotion-authorization.yml" and .type == "blob" and .mode == "100644") | .sha' <<<"$tree")"
+            test "$head_script" = "$MIGRATION_EXPECTED_SCRIPT_BLOB"
+            test "$head_workflow" = "$MIGRATION_EXPECTED_WORKFLOW_BLOB"
+            validate_normal_environment
             jq -e '
-              (.name == "normal-release-promotion-approval")
-              and (.can_admins_bypass == false)
-              and ([.protection_rules[]? | select(.type == "wait_timer")] | length == 0)
-              and ([.protection_rules[]? | select(.type == "required_reviewers")] | length == 1)
-              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == false)
-              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length == 1)
-              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers[0].type == "BusinessTeam")
-              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers[0].reviewer.id == 15545798)
+              (.deployment_branch_policy.protected_branches == false)
+              and (.deployment_branch_policy.custom_branch_policies == true)
             ' live-environment.json >/dev/null
+            gh api \
+              "repos/${REPOSITORY}/environments/normal-release-promotion-approval/deployment-branch-policies" \
+              >live-branch-policies.json
+            jq -e '
+              (.total_count == 1)
+              and (.branch_policies | length == 1)
+              and (.branch_policies[0].type == "branch")
+              and (.branch_policies[0].name == "refs/pull/*/merge")
+            ' live-branch-policies.json >/dev/null
           else
             test "$BOOTSTRAP" = false
+            test "$MIGRATION" = false
             python3 policy/scripts/main-promotion-authorization.py \
               --pull live-pull.json \
               --environment live-environment.json \
@@ -201,6 +312,8 @@ jobs:
               echo '- Approval: deterministic MLX-90 Security exception; human actions: 0'
             elif [ "$BOOTSTRAP" = true ]; then
               echo '- Approval: one-time trust-root bootstrap through the protected human environment'
+            elif [ "$MIGRATION" = true ]; then
+              echo '- Approval: one-time exact-SHA self-review policy migration through the protected human environment'
             else
               echo '- Approval: protected human environment approval completed'
             fi
