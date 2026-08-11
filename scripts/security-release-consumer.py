@@ -65,7 +65,20 @@ APPROVED_ACCEPTANCE_RELEASES: dict[
         "3.1.0",
         "3.2.2",
         frozenset({"GHSA-vjjf-wc74-gp86"}),
-    )
+    ),
+    "lit.supplementary/keycloak-26.7.1-security-v1": (
+        "3.2.2",
+        "3.2.4",
+        frozenset(
+            {
+                "CVE-2026-4629",
+                "CVE-2026-9793",
+                "CVE-2026-14209",
+                "CVE-2026-14614",
+                "CVE-2026-14615",
+            }
+        ),
+    ),
 }
 APPROVED_ACCEPTANCE_PROFILES: frozenset[str] = frozenset(
     APPROVED_ACCEPTANCE_RELEASES

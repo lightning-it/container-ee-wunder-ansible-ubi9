@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.25
+# syntax=docker/dockerfile:1.26
 FROM registry.access.redhat.com/ubi9/python-311:9.8-1779945715@sha256:a0bdb55576fc5b8d6704279307817828ef027e1065533ceba133fe9516003a6c
 
 LABEL maintainer="Lightning IT"
@@ -47,7 +47,7 @@ RUN set -euo pipefail; \
 ################################################################################
 ARG PIP_TIMEOUT=120
 ARG PIP_RETRIES=5
-ARG PIP_VERSION=26.1.2
+ARG PIP_VERSION=26.2.1
 
 COPY requirements.txt /build/requirements.txt
 COPY requirements.lock /build/requirements.lock
@@ -89,7 +89,7 @@ RUN set -euo pipefail; \
 ################################################################################
 # Terragrunt
 ################################################################################
-ARG TERRAGRUNT_VERSION=1.1.1
+ARG TERRAGRUNT_VERSION=1.1.2
 RUN set -euo pipefail; \
     source /usr/local/lib/container-download-verified.sh; \
     arch="$(uname -m)"; \

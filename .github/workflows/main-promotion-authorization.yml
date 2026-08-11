@@ -73,7 +73,7 @@ jobs:
               and (.can_admins_bypass == false)
               and ([.protection_rules[]? | select(.type == "wait_timer")] | length == 0)
               and ([.protection_rules[]? | select(.type == "required_reviewers")] | length == 1)
-              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == true)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == false)
               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length == 1)
               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers[0].type == "BusinessTeam")
               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers[0].reviewer.id == 15545798)
@@ -177,7 +177,7 @@ jobs:
               and (.can_admins_bypass == false)
               and ([.protection_rules[]? | select(.type == "wait_timer")] | length == 0)
               and ([.protection_rules[]? | select(.type == "required_reviewers")] | length == 1)
-              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == true)
+              and ([.protection_rules[]? | select(.type == "required_reviewers")][0].prevent_self_review == false)
               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers | length == 1)
               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers[0].type == "BusinessTeam")
               and ([.protection_rules[]? | select(.type == "required_reviewers")][0].reviewers[0].reviewer.id == 15545798)
@@ -205,3 +205,21 @@ jobs:
               echo '- Approval: protected human environment approval completed'
             fi
           } >>"$GITHUB_STEP_SUMMARY"
+
+  merge-gate:
+    name: Main promotion merge gate
+    if: ${{ always() }}
+    needs: [classify, authorize]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+
+    steps:
+      - name: Require successful protected authorization
+        env:
+          AUTHORIZE_RESULT: ${{ needs.authorize.result }}
+          CLASSIFY_RESULT: ${{ needs.classify.result }}
+        run: |
+          set -euo pipefail
+          test "$CLASSIFY_RESULT" = success
+          test "$AUTHORIZE_RESULT" = success

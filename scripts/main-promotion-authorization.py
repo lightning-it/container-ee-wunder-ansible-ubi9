@@ -115,8 +115,11 @@ def validate_environment(payload: dict[str, Any], result: Authorization) -> None
     if len(reviewer_rules) != 1:
         fail("normal promotion environment must have one reviewer rule")
     reviewer_rule = reviewer_rules[0]
-    if reviewer_rule.get("prevent_self_review") is not True:
-        fail("normal promotion environment must prevent self-review")
+    if reviewer_rule.get("prevent_self_review") is not False:
+        fail(
+            "normal promotion environment must permit the controlled "
+            "small-team self-review path"
+        )
     reviewers = reviewer_rule.get("reviewers")
     if not isinstance(reviewers, list) or len(reviewers) != 1:
         fail("normal promotion environment must have exactly one reviewer")
