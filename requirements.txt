@@ -7,7 +7,7 @@
 # ---------------------------------------------------------------------------
 # Core runtime (pin to 2.18.x series)
 # ---------------------------------------------------------------------------
-ansible-core==2.21.3
+ansible-core==2.18.19
 ansible-runner==2.4.3
 
 # ---------------------------------------------------------------------------
@@ -25,11 +25,12 @@ pyvmomi==9.1.0.0
 # HTTP/TLS stack (helps avoid runtime surprises in minimal images)
 # - requests/urllib3: API calls (vCenter, REST endpoints, etc.)
 # - cryptography: TLS / cert-related functionality used by many deps
+#   Version 50.0.0 fixes CVE-2026-69247 in PKCS#7 EnvelopedData decryption.
 # - certifi: CA bundle consistency in containers
 # ---------------------------------------------------------------------------
 requests==2.34.2
 urllib3==2.7.0
-cryptography==49.0.0
+cryptography==50.0.0
 certifi==2026.7.22
 
 # ---------------------------------------------------------------------------
