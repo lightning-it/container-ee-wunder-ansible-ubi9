@@ -79,8 +79,8 @@ MAX_INSTALLED_TREE_BYTES = 512 * 1024 * 1024
 MAX_SBOM_CANONICAL_ASSIGNMENTS = 720
 MAX_SBOM_CANONICAL_WORK_BYTES = 256 * 1024 * 1024
 TRIVY_IMAGES = {
-    "docker.io/aquasec/trivy:0.72.0@sha256:c6e969c5662a546ad5de4a73c2a6b7a7c627f86d916903e175aa623af5b97ada",
-    "docker.io/aquasec/trivy:0.72.0@sha256:405015d1cd07a2630301169e694a5a420afc4dd553fb462189d4f109ba56a6df",
+    "docker.io/aquasec/trivy:0.73.0@sha256:4bbf3824d974b70f27631005e2e6194d4d8fbd6e72c4a9e04cf521e25c5cb07f",
+    "docker.io/aquasec/trivy:0.73.0@sha256:3c135a0270fe7f19a677eabb3f7eca95c96ae78b52b81697de736670fc6e66c8",
 }
 FILE_PROVENANCE_SUBJECTS = {
     f"assurance-{profile}.json" for profile in PROFILES
