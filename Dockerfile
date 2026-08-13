@@ -89,7 +89,7 @@ RUN set -euo pipefail; \
 ################################################################################
 # Terragrunt
 ################################################################################
-ARG TERRAGRUNT_VERSION=1.1.2
+ARG TERRAGRUNT_VERSION=1.1.3
 RUN set -euo pipefail; \
     source /usr/local/lib/container-download-verified.sh; \
     arch="$(uname -m)"; \
