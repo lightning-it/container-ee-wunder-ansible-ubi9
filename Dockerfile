@@ -110,7 +110,7 @@ RUN set -euo pipefail; \
 ################################################################################
 # Helm
 ################################################################################
-ARG HELM_VERSION=3.21.3
+ARG HELM_VERSION=3.21.4
 RUN set -euo pipefail; \
     source /usr/local/lib/container-download-verified.sh; \
     arch="$(uname -m)"; \
