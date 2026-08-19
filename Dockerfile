@@ -67,7 +67,7 @@ RUN python -m pip install --no-cache-dir --upgrade \
 ################################################################################
 # Terraform
 ################################################################################
-ARG TERRAFORM_VERSION=1.15.8
+ARG TERRAFORM_VERSION=1.15.9
 RUN set -euo pipefail; \
     source /usr/local/lib/container-download-verified.sh; \
     arch="$(uname -m)"; \
