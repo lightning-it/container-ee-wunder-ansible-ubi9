@@ -449,7 +449,7 @@ jobs:
           image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:465d3fdd28d0f2b871ba4b4ec98bd183292e96167f00d9fd40bd249f8632d705
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4
         with:
           driver-opts: image=docker.io/moby/buildkit:buildx-stable-1@sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528
 
@@ -1340,10 +1340,10 @@ jobs:
           chmod 0700 dist
           case "$(uname -m)" in
             x86_64)
-              trivy_image="docker.io/aquasec/trivy:0.73.0@sha256:4bbf3824d974b70f27631005e2e6194d4d8fbd6e72c4a9e04cf521e25c5cb07f"
+              trivy_image="docker.io/aquasec/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9"
               ;;
             aarch64|arm64)
-              trivy_image="docker.io/aquasec/trivy:0.73.0@sha256:3c135a0270fe7f19a677eabb3f7eca95c96ae78b52b81697de736670fc6e66c8"
+              trivy_image="docker.io/aquasec/trivy:0.74.0@sha256:55ad20f8a239a3e95427e60b8aaea38788550c18a3f1772976bebf732e6ae166"
               ;;
             *)
               echo "ERROR: unsupported signing architecture." >&2
@@ -2483,7 +2483,7 @@ jobs:
 
       - name: Set up Buildx for post-release stable promotion
         if: needs.build.outputs.security_release != 'true'
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4
         with:
           driver-opts: image=docker.io/moby/buildkit:buildx-stable-1@sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528
 
