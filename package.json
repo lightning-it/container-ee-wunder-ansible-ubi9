@@ -19,7 +19,7 @@
     },
     "handlebars": "4.7.9",
     "lodash-es": "4.18.1",
-    "js-yaml": "5.2.3",
+    "js-yaml": "5.3.0",
     "npm": "11.19.0",
     "@isaacs/brace-expansion": "5.0.1",
     "picomatch": "4.0.5"
