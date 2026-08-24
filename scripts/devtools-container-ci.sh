@@ -25,17 +25,6 @@ require_digest_pinned_image() {
   fi
 }
 
-github_repository_env="${GITHUB_REPOSITORY:-}"
-repo_name="${github_repository_env##*/}"
-if [ -z "$repo_name" ] || [ "$repo_name" = "$github_repository_env" ]; then
-  repo_name="$(basename "${WUNDER_DEVTOOLS_HOST_WORKSPACE:-$PWD}")"
-fi
-
-github_repository="${github_repository_env:-lightning-it/${repo_name}}"
-github_sha="${GITHUB_SHA:-$(git rev-parse HEAD 2>/dev/null || echo local)}"
-short_sha="${github_sha:0:12}"
-created="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-image="local/${repo_name}:ci"
 target_arch="$(detect_targetarch)"
 case "$target_arch" in
   amd64)
@@ -131,6 +120,46 @@ if any(ord(character) < 32 or ord(character) == 127 for character in value):
 print(value, end="")
 PY
 }
+
+github_repository_env="${GITHUB_REPOSITORY:-}"
+metadata_repository=""
+if [ -f .lit/repository.yml ]; then
+  metadata_repository="$(repository_metadata_value repository)"
+fi
+if [ -n "$metadata_repository" ] \
+  && [[ ! "$metadata_repository" =~ ^[A-Za-z0-9._-]+$ ]]
+then
+  echo "ERROR: repository in .lit/repository.yml is not a valid repository name." >&2
+  exit 1
+fi
+
+if [ -n "$github_repository_env" ]; then
+  if [[ ! "$github_repository_env" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+    echo "ERROR: GITHUB_REPOSITORY is not a valid owner/repository identity." >&2
+    exit 1
+  fi
+  repo_name="${github_repository_env##*/}"
+  if [ -n "$metadata_repository" ] && [ "$repo_name" != "$metadata_repository" ]; then
+    echo "ERROR: GITHUB_REPOSITORY does not match .lit/repository.yml." >&2
+    exit 1
+  fi
+  github_repository="$github_repository_env"
+elif [ -n "$metadata_repository" ]; then
+  repo_name="$metadata_repository"
+  github_repository="lightning-it/${metadata_repository}"
+else
+  repo_name="$(basename "${WUNDER_DEVTOOLS_HOST_WORKSPACE:-$PWD}")"
+  if [[ ! "$repo_name" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "ERROR: workspace basename is not a valid repository name." >&2
+    exit 1
+  fi
+  github_repository="lightning-it/${repo_name}"
+fi
+
+github_sha="${GITHUB_SHA:-$(git rev-parse HEAD 2>/dev/null || echo local)}"
+short_sha="${github_sha:0:12}"
+created="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+image="local/${repo_name}:ci"
 
 validate_container_input() {
   local kind="$1"
@@ -409,10 +438,12 @@ run_contract_tests() {
       then
         python3 -m unittest discover -s tests -p 'test_*.py'
       fi
-      # Copilot extracts and maps a signed native runtime from its cache.
+      # These probes execute only validators already installed in the image.
+      # They never start Copilot or another local AI client, download a runtime,
+      # or map a cached executable; the writable validator cache stays noexec.
       docker run --rm "${validation_container_args[@]}" \
-        --tmpfs "/copilot-cache:rw,exec,nosuid,nodev,size=256m" \
-        -e XDG_CACHE_HOME=/copilot-cache \
+        --tmpfs "/validator-cache:rw,noexec,nosuid,nodev,size=256m" \
+        -e XDG_CACHE_HOME=/validator-cache \
         "$image" bash -lc '
         set -euo pipefail
         export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/tmp/.cache}"
@@ -490,22 +521,7 @@ run_vulnerability_scan() {
       --scanners vuln \
       --ignore-unfixed \
       ${trivy_ignore_args[@]+"${trivy_ignore_args[@]}"} \
-      --severity HIGH \
-      --exit-code 0 \
-      "$image"
-
-  docker run --rm \
-    "${engine_container_args[@]}" \
-    --mount "type=volume,destination=/var/cache/trivy" \
-    --env TMPDIR=/var/cache/trivy \
-    "${readonly_workspace_args[@]}" \
-    "${nested_socket_args[@]}" \
-    "$trivy_image" image \
-      --cache-dir /var/cache/trivy \
-      --scanners vuln \
-      --ignore-unfixed \
-      ${trivy_ignore_args[@]+"${trivy_ignore_args[@]}"} \
-      --severity CRITICAL \
+      --severity HIGH,CRITICAL \
       --exit-code 1 \
       "$image"
 }
