@@ -43,7 +43,12 @@ for name in \
   require_value "$name"
 done
 
-test "$(go env GOVERSION)" = "go1.26.6"
+readonly EXPECTED_GO_VERSION=go1.26.6
+actual_go_version="$(go env GOVERSION)"
+if [ "$actual_go_version" != "$EXPECTED_GO_VERSION" ]; then
+  echo "Error: expected Go toolchain ${EXPECTED_GO_VERSION}, got ${actual_go_version}" >&2
+  exit 1
+fi
 export CGO_ENABLED=0 GOTOOLCHAIN=local
 install -d -m 0755 "$OUT_DIR" "$SOURCE_DIR"
 
