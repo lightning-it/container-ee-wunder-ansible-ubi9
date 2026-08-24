@@ -1,4 +1,19 @@
 # syntax=docker/dockerfile:1.26
+FROM golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS patched-tools
+
+ARG TERRAFORM_VERSION=1.15.9
+ARG TERRAFORM_COMMIT=87488977e32a400445e0c0b4d95c0713a5eee941
+ARG TERRAGRUNT_VERSION=1.1.3
+ARG TERRAGRUNT_COMMIT=54c43a44c62c3171c0279951cf44877af1a2ecb3
+ARG HELM_VERSION=3.21.4
+ARG HELM_COMMIT=813176c51bb5c181dbbd7901298ddcc104cd3417
+ARG HELM_ORAS_VERSION=2.6.2
+ARG TERRAGRUNT_X_MOD_VERSION=0.40.0
+
+COPY scripts/build-patched-go-tools.sh /usr/local/bin/build-patched-go-tools
+RUN chmod 0755 /usr/local/bin/build-patched-go-tools && \
+    /usr/local/bin/build-patched-go-tools
+
 FROM registry.access.redhat.com/ubi9/python-311:9.8-1779945715@sha256:a0bdb55576fc5b8d6704279307817828ef027e1065533ceba133fe9516003a6c
 
 LABEL maintainer="Lightning IT"
@@ -22,9 +37,11 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # RPMs via bindep
 ################################################################################
 COPY bindep.txt /build/bindep.txt
-COPY scripts/container-download-verified.sh /usr/local/lib/container-download-verified.sh
 COPY scripts/install-galaxy-content.sh /usr/local/bin/install-galaxy-content
 COPY scripts/ee-entrypoint.sh /usr/local/bin/ee-entrypoint
+COPY --from=patched-tools /out/terraform /usr/local/bin/terraform
+COPY --from=patched-tools /out/terragrunt /usr/local/bin/terragrunt
+COPY --from=patched-tools /out/helm /usr/local/bin/helm
 
 # hadolint ignore=SC2086
 RUN set -euo pipefail; \
@@ -64,70 +81,10 @@ RUN python -m pip install --no-cache-dir --upgrade \
     rm -f /build/ansible-galaxy.py /build/pip.lock /build/requirements.txt /build/requirements.lock && \
     ansible --version && ansible-galaxy --version && ansible-runner --version
 
-################################################################################
-# Terraform
-################################################################################
-ARG TERRAFORM_VERSION=1.15.9
 RUN set -euo pipefail; \
-    source /usr/local/lib/container-download-verified.sh; \
-    arch="$(uname -m)"; \
-    case "${arch}" in \
-      x86_64) tf_arch="amd64" ;; \
-      aarch64|arm64) tf_arch="arm64" ;; \
-      *) echo "Unsupported arch: ${arch}" >&2; exit 1 ;; \
-    esac; \
-    tf_url="https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${tf_arch}.zip"; \
-    download_verified \
-      "${tf_url}" \
-      /tmp/terraform.zip \
-      "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_SHA256SUMS" \
-      "terraform_${TERRAFORM_VERSION}_linux_${tf_arch}.zip"; \
-    unzip -q /tmp/terraform.zip -d /usr/local/bin && \
-    rm -f /tmp/terraform.zip && \
-    /usr/local/bin/terraform -version
-
-################################################################################
-# Terragrunt
-################################################################################
-ARG TERRAGRUNT_VERSION=1.1.3
-RUN set -euo pipefail; \
-    source /usr/local/lib/container-download-verified.sh; \
-    arch="$(uname -m)"; \
-    case "${arch}" in \
-      x86_64) tg_arch="amd64" ;; \
-      aarch64|arm64) tg_arch="arm64" ;; \
-      *) echo "Unsupported arch: ${arch}" >&2; exit 1 ;; \
-    esac; \
-    tg_url="https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/terragrunt_linux_${tg_arch}"; \
-    download_verified \
-      "${tg_url}" \
-      /usr/local/bin/terragrunt \
-      "https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/SHA256SUMS" \
-      "terragrunt_linux_${tg_arch}"; \
-    chmod 0755 /usr/local/bin/terragrunt && \
-    /usr/local/bin/terragrunt --version
-
-################################################################################
-# Helm
-################################################################################
-ARG HELM_VERSION=3.21.4
-RUN set -euo pipefail; \
-    source /usr/local/lib/container-download-verified.sh; \
-    arch="$(uname -m)"; \
-    case "${arch}" in \
-      x86_64) helm_arch="amd64" ;; \
-      aarch64|arm64) helm_arch="arm64" ;; \
-      *) echo "Unsupported arch: ${arch}" >&2; exit 1 ;; \
-    esac; \
-    helm_url="https://get.helm.sh/helm-v${HELM_VERSION}-linux-${helm_arch}.tar.gz"; \
-    download_verified \
-      "${helm_url}" \
-      /tmp/helm.tar.gz \
-      "https://get.helm.sh/helm-v${HELM_VERSION}-linux-${helm_arch}.tar.gz.sha256sum" \
-      "helm-v${HELM_VERSION}-linux-${helm_arch}.tar.gz"; \
-    tar -xzf /tmp/helm.tar.gz -C /tmp && \
-    install -m 0755 "/tmp/linux-${helm_arch}/helm" /usr/local/bin/helm && \
-    rm -rf /tmp/helm.tar.gz "/tmp/linux-${helm_arch}" && \
+    chmod 0755 /usr/local/bin/terraform /usr/local/bin/terragrunt /usr/local/bin/helm; \
+    /usr/local/bin/terraform -version; \
+    /usr/local/bin/terragrunt --version; \
     /usr/local/bin/helm version --short
 
 ################################################################################
