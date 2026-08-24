@@ -277,7 +277,7 @@ captured_payload "$provenance_capture" | jq -e \
     )
   ' >/dev/null
 
-echo "Scanning ${IMAGE_NAME}:${RELEASE_TAG} for HIGH findings (report only)..."
+echo "Scanning ${IMAGE_NAME}:${RELEASE_TAG} for HIGH and CRITICAL findings (release gate)..."
 docker run --rm \
   "${trivy_container_args[@]}" \
   "${trivy_workspace_args[@]}" \
@@ -286,20 +286,7 @@ docker run --rm \
   --scanners vuln \
   --ignore-unfixed \
   "${trivy_ignore_args[@]}" \
-  --severity HIGH \
-  --exit-code 0 \
-  "$image_ref"
-
-echo "Scanning ${IMAGE_NAME}:${RELEASE_TAG} for CRITICAL findings (release gate)..."
-docker run --rm \
-  "${trivy_container_args[@]}" \
-  "${trivy_workspace_args[@]}" \
-  "$trivy_image" image \
-  --cache-dir /tmp/trivy-cache \
-  --scanners vuln \
-  --ignore-unfixed \
-  "${trivy_ignore_args[@]}" \
-  --severity CRITICAL \
+  --severity HIGH,CRITICAL \
   --exit-code 1 \
   "$image_ref"
 
