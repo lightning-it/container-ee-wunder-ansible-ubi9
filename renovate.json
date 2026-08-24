@@ -28,30 +28,62 @@
     },
     {
       "customType": "regex",
-      "description": "Terraform version pin in Dockerfile",
+      "description": "Terraform release and immutable commit pins in Dockerfile",
       "managerFilePatterns": ["/^Dockerfile$/", "/^Containerfile$/"],
-      "matchStrings": ["ARG\\s+TERRAFORM_VERSION=(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\\s*\\n"],
-      "datasourceTemplate": "github-releases",
+      "matchStrings": [
+        "ARG TERRAFORM_VERSION=(?<currentValue>[0-9.]+)\\nARG TERRAFORM_COMMIT=(?<currentDigest>[a-f0-9]{40})"
+      ],
+      "autoReplaceStringTemplate": "ARG TERRAFORM_VERSION={{{newValue}}}\\nARG TERRAFORM_COMMIT={{{newDigest}}}",
+      "datasourceTemplate": "github-tags",
       "depNameTemplate": "hashicorp/terraform",
+      "extractVersionTemplate": "^v(?<version>[0-9.]+)$",
       "versioningTemplate": "hashicorp"
     },
     {
       "customType": "regex",
-      "description": "Terragrunt version pin in Dockerfile",
+      "description": "Terragrunt release and immutable commit pins in Dockerfile",
       "managerFilePatterns": ["/^Dockerfile$/", "/^Containerfile$/"],
-      "matchStrings": ["ARG\\s+TERRAGRUNT_VERSION=(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\\s*\\n"],
-      "datasourceTemplate": "github-releases",
+      "matchStrings": [
+        "ARG TERRAGRUNT_VERSION=(?<currentValue>[0-9.]+)\\nARG TERRAGRUNT_COMMIT=(?<currentDigest>[a-f0-9]{40})"
+      ],
+      "autoReplaceStringTemplate": "ARG TERRAGRUNT_VERSION={{{newValue}}}\\nARG TERRAGRUNT_COMMIT={{{newDigest}}}",
+      "datasourceTemplate": "github-tags",
       "depNameTemplate": "gruntwork-io/terragrunt",
       "extractVersionTemplate": "^v(?<version>[0-9.]+)$",
       "versioningTemplate": "semver"
     },
     {
       "customType": "regex",
-      "description": "Helm version pin in Dockerfile",
+      "description": "Helm release and immutable commit pins in Dockerfile",
       "managerFilePatterns": ["/^Dockerfile$/", "/^Containerfile$/"],
-      "matchStrings": ["ARG\\s+HELM_VERSION=(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\\s*\\n"],
-      "datasourceTemplate": "github-releases",
+      "matchStrings": [
+        "ARG HELM_VERSION=(?<currentValue>[0-9.]+)\\nARG HELM_COMMIT=(?<currentDigest>[a-f0-9]{40})"
+      ],
+      "autoReplaceStringTemplate": "ARG HELM_VERSION={{{newValue}}}\\nARG HELM_COMMIT={{{newDigest}}}",
+      "datasourceTemplate": "github-tags",
       "depNameTemplate": "helm/helm",
+      "extractVersionTemplate": "^v(?<version>[0-9.]+)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Helm ORAS security override in Dockerfile",
+      "managerFilePatterns": ["/^Dockerfile$/", "/^Containerfile$/"],
+      "matchStrings": ["ARG HELM_ORAS_VERSION=(?<currentValue>[0-9.]+)"],
+      "datasourceTemplate": "go",
+      "depNameTemplate": "oras.land/oras-go/v2",
+      "extractVersionTemplate": "^v(?<version>[0-9.]+)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Terragrunt x/mod security override in Dockerfile",
+      "managerFilePatterns": ["/^Dockerfile$/", "/^Containerfile$/"],
+      "matchStrings": [
+        "ARG TERRAGRUNT_X_MOD_VERSION=(?<currentValue>[0-9.]+)"
+      ],
+      "datasourceTemplate": "go",
+      "depNameTemplate": "golang.org/x/mod",
       "extractVersionTemplate": "^v(?<version>[0-9.]+)$",
       "versioningTemplate": "semver"
     },
