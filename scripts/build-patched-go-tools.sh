@@ -36,6 +36,32 @@ verify_release_tag() {
   test "$(git -C "$destination" rev-list -n 1 refs/tags/lit-release)" = "$commit"
 }
 
+verify_module_override_scope() {
+  local repository="$1"
+  local expected_commit="$2"
+  shift 2
+  local changed_path allowed_path
+  local allowed
+
+  test "$(git -C "$repository" rev-parse HEAD)" = "$expected_commit"
+  git -C "$repository" diff --cached --quiet
+  test -z "$(git -C "$repository" ls-files --others --exclude-standard)"
+  while IFS= read -r changed_path; do
+    allowed=false
+    for allowed_path in "$@"; do
+      if [ "$changed_path" = "$allowed_path" ]; then
+        allowed=true
+        break
+      fi
+    done
+    if [ "$allowed" != true ]; then
+      echo "Error: dependency override modified unexpected path ${changed_path}" >&2
+      exit 1
+    fi
+  done < <(git -C "$repository" diff --name-only --diff-filter=ACDMRTUXB)
+  git -C "$repository" diff --check
+}
+
 for name in \
   TERRAFORM_VERSION TERRAFORM_COMMIT \
   TERRAGRUNT_VERSION TERRAGRUNT_COMMIT TERRAGRUNT_X_MOD_VERSION \
@@ -76,6 +102,8 @@ verify_release_tag "$SOURCE_DIR/terragrunt" "v${TERRAGRUNT_VERSION}" "$TERRAGRUN
   cd "$SOURCE_DIR/terragrunt"
   go get "golang.org/x/mod@v${TERRAGRUNT_X_MOD_VERSION}"
   test "$(go list -m -f '{{.Version}}' golang.org/x/mod)" = "v${TERRAGRUNT_X_MOD_VERSION}"
+  verify_module_override_scope \
+    "$SOURCE_DIR/terragrunt" "$TERRAGRUNT_COMMIT" go.mod go.sum
   go build \
     -buildvcs=false \
     -trimpath \
@@ -93,6 +121,8 @@ verify_release_tag "$SOURCE_DIR/helm" "v${HELM_VERSION}" "$HELM_COMMIT"
   cd "$SOURCE_DIR/helm"
   go get "oras.land/oras-go/v2@v${HELM_ORAS_VERSION}"
   test "$(go list -m -f '{{.Version}}' oras.land/oras-go/v2)" = "v${HELM_ORAS_VERSION}"
+  verify_module_override_scope \
+    "$SOURCE_DIR/helm" "$HELM_COMMIT" go.mod go.sum
   make build \
     BINDIR="$OUT_DIR" \
     VERSION="v${HELM_VERSION}" \
