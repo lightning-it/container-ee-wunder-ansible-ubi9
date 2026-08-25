@@ -7,9 +7,6 @@
     ":semanticCommitType(chore)",
     ":semanticCommitScope(deps)"
   ],
-  "renovate-config": {
-    "enabled": false
-  },
   "labels": ["dependencies", "renovate"],
   "baseBranchPatterns": ["develop"],
   "timezone": "UTC",
@@ -17,6 +14,31 @@
   "rebaseWhen": "behind-base-branch",
   "prConcurrentLimit": 5,
   "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Dockerfile frontend version and immutable image digest",
+      "managerFilePatterns": ["/^Dockerfile$/", "/^Containerfile$/"],
+      "matchStrings": [
+        "# syntax=docker/dockerfile:(?<currentValue>[0-9.]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "autoReplaceStringTemplate": "# syntax=docker/dockerfile:{{{newValue}}}@{{{newDigest}}}",
+      "datasourceTemplate": "docker",
+      "packageNameTemplate": "docker.io/docker/dockerfile",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Go builder version and immutable image digest in Dockerfile",
+      "managerFilePatterns": ["/^Dockerfile$/", "/^Containerfile$/"],
+      "matchStrings": [
+        "ARG GO_VERSION=(?<currentValue>[0-9.]+)\\nFROM golang:\\$\\{GO_VERSION\\}-bookworm@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "autoReplaceStringTemplate": "ARG GO_VERSION={{{newValue}}}\\nFROM golang:${GO_VERSION}-bookworm@{{{newDigest}}}",
+      "datasourceTemplate": "docker",
+      "packageNameTemplate": "docker.io/library/golang",
+      "extractVersionTemplate": "^(?<version>[0-9.]+)-bookworm$",
+      "versioningTemplate": "docker"
+    },
     {
       "customType": "regex",
       "description": "pip version pin in Dockerfile",
@@ -140,6 +162,11 @@
     }
   ],
   "packageRules": [
+    {
+      "description": "Do not update Renovate configuration dependencies",
+      "matchManagers": ["renovate-config"],
+      "enabled": false
+    },
     {
       "description": "Automerge safe non-major updates into develop after CI passes",
       "matchUpdateTypes": [
