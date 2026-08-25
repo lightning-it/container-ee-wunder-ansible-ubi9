@@ -2,6 +2,7 @@
 ARG GO_VERSION=1.26.6
 FROM golang:${GO_VERSION}-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS patched-tools
 
+ARG GO_VERSION
 ARG TERRAFORM_VERSION=1.15.9
 ARG TERRAFORM_COMMIT=87488977e32a400445e0c0b4d95c0713a5eee941
 ARG TERRAGRUNT_VERSION=1.1.3
@@ -13,7 +14,7 @@ ARG TERRAGRUNT_X_MOD_VERSION=0.40.0
 
 COPY scripts/build-patched-go-tools.sh /usr/local/bin/build-patched-go-tools
 RUN chmod 0755 /usr/local/bin/build-patched-go-tools && \
-    /usr/local/bin/build-patched-go-tools
+    GO_VERSION="${GO_VERSION}" /usr/local/bin/build-patched-go-tools
 
 FROM registry.access.redhat.com/ubi9/python-311:9.8-1779945715@sha256:a0bdb55576fc5b8d6704279307817828ef027e1065533ceba133fe9516003a6c
 

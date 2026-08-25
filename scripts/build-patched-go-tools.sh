@@ -63,13 +63,14 @@ verify_module_override_scope() {
 }
 
 for name in \
+  GO_VERSION \
   TERRAFORM_VERSION TERRAFORM_COMMIT \
   TERRAGRUNT_VERSION TERRAGRUNT_COMMIT TERRAGRUNT_X_MOD_VERSION \
   HELM_VERSION HELM_COMMIT HELM_ORAS_VERSION; do
   require_value "$name"
 done
 
-readonly EXPECTED_GO_VERSION=go1.26.6
+readonly EXPECTED_GO_VERSION="go${GO_VERSION}"
 actual_go_version="$(go env GOVERSION)"
 if [ "$actual_go_version" != "$EXPECTED_GO_VERSION" ]; then
   echo "Error: expected Go toolchain ${EXPECTED_GO_VERSION}, got ${actual_go_version}" >&2
