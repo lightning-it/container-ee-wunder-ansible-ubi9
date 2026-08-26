@@ -7,9 +7,6 @@
     ":semanticCommitType(chore)",
     ":semanticCommitScope(deps)"
   ],
-  "renovate-config": {
-    "enabled": false
-  },
   "labels": ["dependencies", "renovate"],
   "baseBranchPatterns": ["develop"],
   "timezone": "UTC",
@@ -17,6 +14,31 @@
   "rebaseWhen": "behind-base-branch",
   "prConcurrentLimit": 5,
   "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Dockerfile frontend version and immutable image digest",
+      "managerFilePatterns": ["/^Dockerfile$/", "/^Containerfile$/"],
+      "matchStrings": [
+        "# syntax=docker/dockerfile:(?<currentValue>[0-9.]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "autoReplaceStringTemplate": "# syntax=docker/dockerfile:{{{newValue}}}@{{{newDigest}}}",
+      "datasourceTemplate": "docker",
+      "packageNameTemplate": "docker.io/docker/dockerfile",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "Go builder version and immutable image digest in Dockerfile",
+      "managerFilePatterns": ["/^Dockerfile$/", "/^Containerfile$/"],
+      "matchStrings": [
+        "ARG GO_VERSION=(?<currentValue>[0-9.]+)\\nFROM golang:\\$\\{GO_VERSION\\}-bookworm@(?<currentDigest>sha256:[a-f0-9]{64}) AS patched-tools"
+      ],
+      "autoReplaceStringTemplate": "ARG GO_VERSION={{{newValue}}}\\nFROM golang:${GO_VERSION}-bookworm@{{{newDigest}}} AS patched-tools",
+      "datasourceTemplate": "docker",
+      "packageNameTemplate": "docker.io/library/golang",
+      "extractVersionTemplate": "^(?<version>[0-9.]+)-bookworm$",
+      "versioningTemplate": "docker"
+    },
     {
       "customType": "regex",
       "description": "pip version pin in Dockerfile",
@@ -28,30 +50,62 @@
     },
     {
       "customType": "regex",
-      "description": "Terraform version pin in Dockerfile",
+      "description": "Terraform release and immutable commit pins in Dockerfile",
       "managerFilePatterns": ["/^Dockerfile$/", "/^Containerfile$/"],
-      "matchStrings": ["ARG\\s+TERRAFORM_VERSION=(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\\s*\\n"],
-      "datasourceTemplate": "github-releases",
+      "matchStrings": [
+        "ARG TERRAFORM_VERSION=(?<currentValue>[0-9.]+)\\nARG TERRAFORM_COMMIT=(?<currentDigest>[a-f0-9]{40})"
+      ],
+      "autoReplaceStringTemplate": "ARG TERRAFORM_VERSION={{{newValue}}}\\nARG TERRAFORM_COMMIT={{{newDigest}}}",
+      "datasourceTemplate": "github-tags",
       "depNameTemplate": "hashicorp/terraform",
+      "extractVersionTemplate": "^v(?<version>[0-9.]+)$",
       "versioningTemplate": "hashicorp"
     },
     {
       "customType": "regex",
-      "description": "Terragrunt version pin in Dockerfile",
+      "description": "Terragrunt release and immutable commit pins in Dockerfile",
       "managerFilePatterns": ["/^Dockerfile$/", "/^Containerfile$/"],
-      "matchStrings": ["ARG\\s+TERRAGRUNT_VERSION=(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\\s*\\n"],
-      "datasourceTemplate": "github-releases",
+      "matchStrings": [
+        "ARG TERRAGRUNT_VERSION=(?<currentValue>[0-9.]+)\\nARG TERRAGRUNT_COMMIT=(?<currentDigest>[a-f0-9]{40})"
+      ],
+      "autoReplaceStringTemplate": "ARG TERRAGRUNT_VERSION={{{newValue}}}\\nARG TERRAGRUNT_COMMIT={{{newDigest}}}",
+      "datasourceTemplate": "github-tags",
       "depNameTemplate": "gruntwork-io/terragrunt",
       "extractVersionTemplate": "^v(?<version>[0-9.]+)$",
       "versioningTemplate": "semver"
     },
     {
       "customType": "regex",
-      "description": "Helm version pin in Dockerfile",
+      "description": "Helm release and immutable commit pins in Dockerfile",
       "managerFilePatterns": ["/^Dockerfile$/", "/^Containerfile$/"],
-      "matchStrings": ["ARG\\s+HELM_VERSION=(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\\s*\\n"],
-      "datasourceTemplate": "github-releases",
+      "matchStrings": [
+        "ARG HELM_VERSION=(?<currentValue>[0-9.]+)\\nARG HELM_COMMIT=(?<currentDigest>[a-f0-9]{40})"
+      ],
+      "autoReplaceStringTemplate": "ARG HELM_VERSION={{{newValue}}}\\nARG HELM_COMMIT={{{newDigest}}}",
+      "datasourceTemplate": "github-tags",
       "depNameTemplate": "helm/helm",
+      "extractVersionTemplate": "^v(?<version>[0-9.]+)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Helm ORAS security override in Dockerfile",
+      "managerFilePatterns": ["/^Dockerfile$/", "/^Containerfile$/"],
+      "matchStrings": ["ARG HELM_ORAS_VERSION=(?<currentValue>[0-9.]+)"],
+      "datasourceTemplate": "go",
+      "depNameTemplate": "oras.land/oras-go/v2",
+      "extractVersionTemplate": "^v(?<version>[0-9.]+)$",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Terragrunt x/mod security override in Dockerfile",
+      "managerFilePatterns": ["/^Dockerfile$/", "/^Containerfile$/"],
+      "matchStrings": [
+        "ARG TERRAGRUNT_X_MOD_VERSION=(?<currentValue>[0-9.]+)"
+      ],
+      "datasourceTemplate": "go",
+      "depNameTemplate": "golang.org/x/mod",
       "extractVersionTemplate": "^v(?<version>[0-9.]+)$",
       "versioningTemplate": "semver"
     },
@@ -108,6 +162,11 @@
     }
   ],
   "packageRules": [
+    {
+      "description": "Do not update Renovate configuration dependencies",
+      "matchManagers": ["renovate-config"],
+      "enabled": false
+    },
     {
       "description": "Automerge safe non-major updates into develop after CI passes",
       "matchUpdateTypes": [
