@@ -57,11 +57,22 @@ RUN set -euo pipefail; \
       echo "No bindep RPMs to install."; \
     fi; \
     locked_security_pkgs=(); \
+    lock_line=0; \
     while read -r package evr extra; do \
+      lock_line=$((lock_line + 1)); \
       [[ -z "${package}" || "${package}" == \#* ]] && continue; \
-      [[ "${package}" =~ ^[A-Za-z0-9+._-]+$ ]]; \
-      [[ "${evr}" =~ ^[0-9]+:[A-Za-z0-9+._~^-]+-[A-Za-z0-9+._~^-]+$ ]]; \
-      [[ -z "${extra:-}" ]]; \
+      if ! [[ "${package}" =~ ^[A-Za-z0-9+._-]+$ ]]; then \
+        echo "Invalid RPM package at lock line ${lock_line}: ${package}" >&2; \
+        exit 1; \
+      fi; \
+      if ! [[ "${evr}" =~ ^[0-9]+:[A-Za-z0-9+._~^-]+-[A-Za-z0-9+._~^-]+$ ]]; then \
+        echo "Invalid RPM EVR at lock line ${lock_line}: ${evr:-<missing>}" >&2; \
+        exit 1; \
+      fi; \
+      if [[ -n "${extra:-}" ]]; then \
+        echo "Unexpected field at RPM lock line ${lock_line}: ${extra}" >&2; \
+        exit 1; \
+      fi; \
       if rpm -q "${package}" >/dev/null; then \
         locked_security_pkgs+=("${package}-${evr}"); \
       fi; \
@@ -72,7 +83,11 @@ RUN set -euo pipefail; \
     while read -r package evr extra; do \
       [[ -z "${package}" || "${package}" == \#* ]] && continue; \
       if rpm -q "${package}" >/dev/null; then \
-        test "$(rpm -q --qf '%{EPOCHNUM}:%{VERSION}-%{RELEASE}\n' "${package}")" = "${evr}"; \
+        actual_evr="$(rpm -q --qf '%{EPOCHNUM}:%{VERSION}-%{RELEASE}\n' "${package}")"; \
+        if [[ "${actual_evr}" != "${evr}" ]]; then \
+          echo "RPM security lock mismatch for ${package}: expected ${evr}, got ${actual_evr}" >&2; \
+          exit 1; \
+        fi; \
       fi; \
     done < /build/rpm-security-updates.lock; \
     dnf -y clean all; \
