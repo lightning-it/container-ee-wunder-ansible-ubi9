@@ -13,6 +13,20 @@ require_value() {
   fi
 }
 
+assert_exact_output() {
+  local expected="$1"
+  shift
+  local actual
+
+  actual="$("$@" 2>&1)"
+  if [ "$actual" != "$expected" ]; then
+    printf 'Error: expected exact output:\n%s\nactual output:\n%s\n' \
+      "$expected" "$actual" >&2
+    exit 1
+  fi
+  printf '%s\n' "$actual"
+}
+
 clone_exact() {
   local repository="$1"
   local commit="$2"
@@ -134,8 +148,14 @@ verify_release_tag "$SOURCE_DIR/helm" "v${HELM_VERSION}" "$HELM_COMMIT"
 )
 
 chmod 0755 "$OUT_DIR/terraform" "$OUT_DIR/terragrunt" "$OUT_DIR/helm"
-"$OUT_DIR/terraform" -version | grep -Fx "Terraform v${TERRAFORM_VERSION}"
-"$OUT_DIR/terragrunt" --version \
-  | grep -Fx "terragrunt version v${TERRAGRUNT_VERSION}+${REBUILD_METADATA}"
-"$OUT_DIR/helm" version --short \
-  | grep -Fx "v${HELM_VERSION}+${REBUILD_METADATA}+g${HELM_COMMIT:0:7}"
+terraform_platform="$(go env GOOS)_$(go env GOARCH)"
+readonly terraform_platform
+assert_exact_output \
+  "$(printf 'Terraform v%s\non %s' "$TERRAFORM_VERSION" "$terraform_platform")" \
+  "$OUT_DIR/terraform" -version
+assert_exact_output \
+  "terragrunt version v${TERRAGRUNT_VERSION}+${REBUILD_METADATA}" \
+  "$OUT_DIR/terragrunt" --version
+assert_exact_output \
+  "v${HELM_VERSION}+${REBUILD_METADATA}+g${HELM_COMMIT:0:7}" \
+  "$OUT_DIR/helm" version --short
