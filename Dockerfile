@@ -49,7 +49,6 @@ COPY --from=patched-tools /out/helm /usr/local/bin/helm
 RUN set -euo pipefail; \
     mapfile -t pkgs < <(grep -Ev '^\s*#|^\s*$' /build/bindep.txt | awk '{print $1}'); \
     pkgs+=(ca-certificates nss_wrapper); \
-    dnf -y update; \
     if (( ${#pkgs[@]} )); then \
       echo "Installing bindep RPMs: ${pkgs[*]}"; \
       dnf -y install ${PKGMGR_OPTS} "${pkgs[@]}"; \
@@ -85,7 +84,7 @@ RUN python -m pip install --no-cache-dir --upgrade \
 
 RUN set -euo pipefail; \
     chmod 0755 /usr/local/bin/terraform /usr/local/bin/terragrunt /usr/local/bin/helm; \
-    /usr/local/bin/terraform -version; \
+    CHECKPOINT_DISABLE=1 /usr/local/bin/terraform -version; \
     /usr/local/bin/terragrunt --version; \
     /usr/local/bin/helm version --short
 

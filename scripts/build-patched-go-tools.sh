@@ -152,7 +152,7 @@ terraform_platform="$(go env GOOS)_$(go env GOARCH)"
 readonly terraform_platform
 assert_exact_output \
   "$(printf 'Terraform v%s\non %s' "$TERRAFORM_VERSION" "$terraform_platform")" \
-  "$OUT_DIR/terraform" -version
+  env CHECKPOINT_DISABLE=1 "$OUT_DIR/terraform" -version
 assert_exact_output \
   "terragrunt version v${TERRAGRUNT_VERSION}+${REBUILD_METADATA}" \
   "$OUT_DIR/terragrunt" --version
