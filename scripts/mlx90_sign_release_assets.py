@@ -1256,7 +1256,7 @@ def reauthenticate_profile(
                 "vuln",
                 "--ignore-unfixed",
                 "--severity",
-                "CRITICAL",
+                "HIGH,CRITICAL",
                 "--exit-code",
                 "1",
                 platform_reference,
@@ -1439,7 +1439,7 @@ def validate_generic(
         "security_scan": "trivy-completed",
         "trivy_status": "passed",
         "trivy_gate": "passed-before-quay-publish",
-        "trivy_severity": "CRITICAL",
+        "trivy_severity": "HIGH,CRITICAL",
         "trivy_report": f"{release_base}/sbom.cdx.json",
         "sbom": f"{release_base}/sbom.cdx.json",
         "provenance": f"{release_base}/release-provenance.intoto.jsonl",
@@ -1527,7 +1527,7 @@ def validate_generic(
         "security_scan_status": "trivy-completed",
         "trivy_status": "passed",
         "trivy_gate": "passed-before-quay-publish",
-        "trivy_severity": "CRITICAL",
+        "trivy_severity": "HIGH,CRITICAL",
         "trivy_report": f"{release_base}/sbom.cdx.json",
     }:
         fail("generic security record is invalid")
