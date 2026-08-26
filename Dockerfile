@@ -39,6 +39,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # RPMs via bindep
 ################################################################################
 COPY bindep.txt /build/bindep.txt
+COPY rpm-security-updates.lock /build/rpm-security-updates.lock
 COPY scripts/install-galaxy-content.sh /usr/local/bin/install-galaxy-content
 COPY scripts/ee-entrypoint.sh /usr/local/bin/ee-entrypoint
 COPY --from=patched-tools /out/terraform /usr/local/bin/terraform
@@ -55,9 +56,28 @@ RUN set -euo pipefail; \
     else \
       echo "No bindep RPMs to install."; \
     fi; \
+    locked_security_pkgs=(); \
+    while read -r package evr extra; do \
+      [[ -z "${package}" || "${package}" == \#* ]] && continue; \
+      [[ "${package}" =~ ^[A-Za-z0-9+._-]+$ ]]; \
+      [[ "${evr}" =~ ^[0-9]+:[A-Za-z0-9+._~^-]+-[A-Za-z0-9+._~^-]+$ ]]; \
+      [[ -z "${extra:-}" ]]; \
+      if rpm -q "${package}" >/dev/null; then \
+        locked_security_pkgs+=("${package}-${evr}"); \
+      fi; \
+    done < /build/rpm-security-updates.lock; \
+    if (( ${#locked_security_pkgs[@]} )); then \
+      dnf -y install ${PKGMGR_OPTS} "${locked_security_pkgs[@]}"; \
+    fi; \
+    while read -r package evr extra; do \
+      [[ -z "${package}" || "${package}" == \#* ]] && continue; \
+      if rpm -q "${package}" >/dev/null; then \
+        test "$(rpm -q --qf '%{EPOCHNUM}:%{VERSION}-%{RELEASE}\n' "${package}")" = "${evr}"; \
+      fi; \
+    done < /build/rpm-security-updates.lock; \
     dnf -y clean all; \
     rm -rf /var/cache/dnf /var/cache/yum; \
-    rm -f /build/bindep.txt; \
+    rm -f /build/bindep.txt /build/rpm-security-updates.lock; \
     chmod 0755 /usr/local/bin/install-galaxy-content /usr/local/bin/ee-entrypoint
 
 ################################################################################
