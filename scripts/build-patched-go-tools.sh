@@ -134,6 +134,8 @@ verify_release_tag "$SOURCE_DIR/helm" "v${HELM_VERSION}" "$HELM_COMMIT"
 )
 
 chmod 0755 "$OUT_DIR/terraform" "$OUT_DIR/terragrunt" "$OUT_DIR/helm"
-"$OUT_DIR/terraform" -version | grep -F "Terraform v${TERRAFORM_VERSION}"
-"$OUT_DIR/terragrunt" --version | grep -F "v${TERRAGRUNT_VERSION}+${REBUILD_METADATA}"
-"$OUT_DIR/helm" version --short | grep -F "v${HELM_VERSION}+${REBUILD_METADATA}"
+"$OUT_DIR/terraform" -version | grep -Fx "Terraform v${TERRAFORM_VERSION}"
+"$OUT_DIR/terragrunt" --version \
+  | grep -Fx "terragrunt version v${TERRAGRUNT_VERSION}+${REBUILD_METADATA}"
+"$OUT_DIR/helm" version --short \
+  | grep -Fx "v${HELM_VERSION}+${REBUILD_METADATA}+g${HELM_COMMIT:0:7}"
