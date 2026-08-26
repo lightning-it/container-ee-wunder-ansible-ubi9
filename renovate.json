@@ -31,9 +31,9 @@
       "description": "Go builder version and immutable image digest in Dockerfile",
       "managerFilePatterns": ["/^Dockerfile$/", "/^Containerfile$/"],
       "matchStrings": [
-        "ARG GO_VERSION=(?<currentValue>[0-9.]+)\\nFROM golang:\\$\\{GO_VERSION\\}-bookworm@(?<currentDigest>sha256:[a-f0-9]{64})"
+        "ARG GO_VERSION=(?<currentValue>[0-9.]+)\\nFROM golang:\\$\\{GO_VERSION\\}-bookworm@(?<currentDigest>sha256:[a-f0-9]{64}) AS patched-tools"
       ],
-      "autoReplaceStringTemplate": "ARG GO_VERSION={{{newValue}}}\\nFROM golang:${GO_VERSION}-bookworm@{{{newDigest}}}",
+      "autoReplaceStringTemplate": "ARG GO_VERSION={{{newValue}}}\\nFROM golang:${GO_VERSION}-bookworm@{{{newDigest}}} AS patched-tools",
       "datasourceTemplate": "docker",
       "packageNameTemplate": "docker.io/library/golang",
       "extractVersionTemplate": "^(?<version>[0-9.]+)-bookworm$",
