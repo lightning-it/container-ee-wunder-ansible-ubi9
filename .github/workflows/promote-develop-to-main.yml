@@ -665,3 +665,7 @@ jobs:
           fi
           echo '::error::Closed the failed promotion; a fresh PR bound to a new develop head is required.'
           exit 1
+
+  # The protected Exact-Revision producer owns the one verifier handoff after
+  # it has published a terminal neutral result. A promotion-level helper would
+  # race that producer and is therefore intentionally forbidden here.
