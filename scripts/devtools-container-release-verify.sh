@@ -200,7 +200,7 @@ trivy_container_args=(
   --security-opt no-new-privileges=true
   --security-opt label=disable
   --pids-limit 256
-  --tmpfs "/tmp:rw,noexec,nosuid,nodev,size=4g"
+  --tmpfs "/tmp:rw,noexec,nosuid,nodev,size=8g"
 )
 trivy_ignore_args=()
 [ ! -f .trivyignore ] || trivy_ignore_args=(--ignorefile .trivyignore)
