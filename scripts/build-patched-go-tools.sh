@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly OUT_DIR=/out
 readonly SOURCE_DIR=/src
-readonly REBUILD_METADATA=lit.1
+readonly REBUILD_METADATA=lit.2
 
 require_value() {
   local name="$1"
@@ -25,6 +25,23 @@ assert_exact_output() {
     exit 1
   fi
   printf '%s\n' "$actual"
+}
+
+assert_module_version() {
+  local binary="$1"
+  local module="$2"
+  local expected="$3"
+  local actual
+
+  actual="$(
+    go version -m "$binary" \
+      | awk -v module="$module" '$1 == "dep" && $2 == module { print $3 }'
+  )"
+  if [ "$actual" != "$expected" ]; then
+    printf 'Error: expected %s in %s at %s, got %s\n' \
+      "$module" "$binary" "$expected" "${actual:-<missing>}" >&2
+    exit 1
+  fi
 }
 
 clone_exact() {
@@ -77,7 +94,7 @@ verify_module_override_scope() {
 }
 
 for name in \
-  GO_VERSION \
+  GO_VERSION GO_X_CRYPTO_VERSION \
   TERRAFORM_VERSION TERRAFORM_COMMIT \
   TERRAGRUNT_VERSION TERRAGRUNT_COMMIT TERRAGRUNT_X_MOD_VERSION \
   HELM_VERSION HELM_COMMIT HELM_ORAS_VERSION; do
@@ -135,7 +152,9 @@ verify_release_tag "$SOURCE_DIR/helm" "v${HELM_VERSION}" "$HELM_COMMIT"
 (
   cd "$SOURCE_DIR/helm"
   go get "oras.land/oras-go/v2@v${HELM_ORAS_VERSION}"
+  go get "golang.org/x/crypto@v${GO_X_CRYPTO_VERSION}"
   test "$(go list -m -f '{{.Version}}' oras.land/oras-go/v2)" = "v${HELM_ORAS_VERSION}"
+  test "$(go list -m -f '{{.Version}}' golang.org/x/crypto)" = "v${GO_X_CRYPTO_VERSION}"
   verify_module_override_scope \
     "$SOURCE_DIR/helm" "$HELM_COMMIT" go.mod go.sum
   make build \
@@ -148,6 +167,8 @@ verify_release_tag "$SOURCE_DIR/helm" "v${HELM_VERSION}" "$HELM_COMMIT"
 )
 
 chmod 0755 "$OUT_DIR/terraform" "$OUT_DIR/terragrunt" "$OUT_DIR/helm"
+assert_module_version \
+  "$OUT_DIR/helm" golang.org/x/crypto "v${GO_X_CRYPTO_VERSION}"
 terraform_platform="$(go env GOOS)_$(go env GOARCH)"
 readonly terraform_platform
 assert_exact_output \
