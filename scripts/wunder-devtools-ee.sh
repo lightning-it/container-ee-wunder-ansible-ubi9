@@ -147,6 +147,9 @@ fi
 DOCKER_ARGS=(
   -w /workspace
   -e HOME="${CONTAINER_HOME}"
+  # Keep language-runtime build products off the generic noexec /tmp mount.
+  # CONTAINER_HOME is a fresh executable tmpfs for every invocation.
+  -e TMPDIR="${CONTAINER_HOME}"
   --read-only
   --network "$NETWORK_MODE"
   --cap-drop ALL
