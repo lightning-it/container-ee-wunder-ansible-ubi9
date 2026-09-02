@@ -94,7 +94,7 @@ verify_module_override_scope() {
 }
 
 for name in \
-  GO_VERSION GO_X_CRYPTO_VERSION \
+  GO_VERSION GO_X_CRYPTO_VERSION GO_GRPC_VERSION \
   TERRAFORM_VERSION TERRAFORM_COMMIT \
   TERRAGRUNT_VERSION TERRAGRUNT_COMMIT TERRAGRUNT_X_MOD_VERSION \
   HELM_VERSION HELM_COMMIT HELM_ORAS_VERSION; do
@@ -117,6 +117,10 @@ clone_exact \
 verify_release_tag "$SOURCE_DIR/terraform" "v${TERRAFORM_VERSION}" "$TERRAFORM_COMMIT"
 (
   cd "$SOURCE_DIR/terraform"
+  go get "google.golang.org/grpc@v${GO_GRPC_VERSION}"
+  test "$(go list -m -f '{{.Version}}' google.golang.org/grpc)" = "v${GO_GRPC_VERSION}"
+  verify_module_override_scope \
+    "$SOURCE_DIR/terraform" "$TERRAFORM_COMMIT" go.mod go.sum
   go build \
     -buildvcs=false \
     -trimpath \
@@ -133,7 +137,9 @@ verify_release_tag "$SOURCE_DIR/terragrunt" "v${TERRAGRUNT_VERSION}" "$TERRAGRUN
 (
   cd "$SOURCE_DIR/terragrunt"
   go get "golang.org/x/mod@v${TERRAGRUNT_X_MOD_VERSION}"
+  go get "google.golang.org/grpc@v${GO_GRPC_VERSION}"
   test "$(go list -m -f '{{.Version}}' golang.org/x/mod)" = "v${TERRAGRUNT_X_MOD_VERSION}"
+  test "$(go list -m -f '{{.Version}}' google.golang.org/grpc)" = "v${GO_GRPC_VERSION}"
   verify_module_override_scope \
     "$SOURCE_DIR/terragrunt" "$TERRAGRUNT_COMMIT" go.mod go.sum
   go build \
@@ -167,6 +173,10 @@ verify_release_tag "$SOURCE_DIR/helm" "v${HELM_VERSION}" "$HELM_COMMIT"
 )
 
 chmod 0755 "$OUT_DIR/terraform" "$OUT_DIR/terragrunt" "$OUT_DIR/helm"
+assert_module_version \
+  "$OUT_DIR/terraform" google.golang.org/grpc "v${GO_GRPC_VERSION}"
+assert_module_version \
+  "$OUT_DIR/terragrunt" google.golang.org/grpc "v${GO_GRPC_VERSION}"
 assert_module_version \
   "$OUT_DIR/helm" golang.org/x/crypto "v${GO_X_CRYPTO_VERSION}"
 terraform_platform="$(go env GOOS)_$(go env GOARCH)"
