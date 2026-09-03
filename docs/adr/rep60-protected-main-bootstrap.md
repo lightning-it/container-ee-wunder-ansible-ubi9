@@ -21,3 +21,21 @@ yet dispatch the protected exact-revision review workflow. It creates no new
 review exception, bypass, or downstream ownership rule. Subsequent changes to
 these managed files continue to originate exclusively in Shared Assets and
 arrive through the official sync path.
+
+## Exact-revision controller dependency closure
+
+The follow-up bootstrap copies the complete protected exact-revision review
+dependency set from the same protected `develop` commit: the current-revision
+dispatcher/verifier, the Exact-Revision Codex dispatch controller, the protected
+rerun helper, the Git-object materializer, the review prompt, and the strict
+result schema. All six files are byte-identical to the official Shared Assets
+generation identified above; none is edited downstream.
+
+The six files move together because the current-revision controller must
+dispatch and verify the exact workflow contract that its protected Codex
+controller implements, and that controller is not usable without its rerun
+helper, materializer, prompt, and schema. Once this dependency closure is present
+on protected `main`, ordinary same-repository Release App pull requests can use
+the MLX-90 section 7.2 exact-revision Codex path. This bootstrap does not
+authorize an additional AI request, a retry, a bypass, a force-push, or a new
+exception.
