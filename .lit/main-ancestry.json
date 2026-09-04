@@ -1,0 +1,7 @@
+{
+  "develop_parent_sha": "0cfaad112250e3b67a56002bbcc8af45ad5773a9",
+  "main_sha": "99565d89ddcd37861373b0587824073ab00326fd",
+  "purpose": "Bind the reviewed main ancestry backmerge.",
+  "repository": "lightning-it/container-ee-wunder-ansible-ubi9",
+  "schema_version": 1
+}

@@ -188,8 +188,8 @@ image_ref="${IMAGE_NAME}@${IMAGE_DIGEST}"
 workflow_identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/container-build-publish.yml@refs/tags/${RELEASE_TAG}"
 workflow_identity_regexp="^https://github\\.com/${GITHUB_REPOSITORY}/\\.github/workflows/container-build-publish\\.yml@refs/tags/${RELEASE_TAG}$"
 case "$(detect_targetarch)" in
-  amd64) trivy_default="docker.io/aquasec/trivy:0.73.0@sha256:4bbf3824d974b70f27631005e2e6194d4d8fbd6e72c4a9e04cf521e25c5cb07f" ;;
-  arm64) trivy_default="docker.io/aquasec/trivy:0.73.0@sha256:3c135a0270fe7f19a677eabb3f7eca95c96ae78b52b81697de736670fc6e66c8" ;;
+  amd64) trivy_default="docker.io/aquasec/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9" ;;
+  arm64) trivy_default="docker.io/aquasec/trivy:0.74.0@sha256:55ad20f8a239a3e95427e60b8aaea38788550c18a3f1772976bebf732e6ae166" ;;
 esac
 trivy_image="${TRIVY_IMAGE:-$trivy_default}"
 require_digest_pinned_image trivy "$trivy_image"
@@ -200,7 +200,7 @@ trivy_container_args=(
   --security-opt no-new-privileges=true
   --security-opt label=disable
   --pids-limit 256
-  --tmpfs "/tmp:rw,noexec,nosuid,nodev,size=4g"
+  --tmpfs "/tmp:rw,noexec,nosuid,nodev,size=8g"
 )
 trivy_ignore_args=()
 [ ! -f .trivyignore ] || trivy_ignore_args=(--ignorefile .trivyignore)
@@ -277,7 +277,7 @@ captured_payload "$provenance_capture" | jq -e \
     )
   ' >/dev/null
 
-echo "Scanning ${IMAGE_NAME}:${RELEASE_TAG} for HIGH findings (report only)..."
+echo "Scanning ${IMAGE_NAME}:${RELEASE_TAG} for HIGH and CRITICAL findings (release gate)..."
 docker run --rm \
   "${trivy_container_args[@]}" \
   "${trivy_workspace_args[@]}" \
@@ -286,20 +286,7 @@ docker run --rm \
   --scanners vuln \
   --ignore-unfixed \
   "${trivy_ignore_args[@]}" \
-  --severity HIGH \
-  --exit-code 0 \
-  "$image_ref"
-
-echo "Scanning ${IMAGE_NAME}:${RELEASE_TAG} for CRITICAL findings (release gate)..."
-docker run --rm \
-  "${trivy_container_args[@]}" \
-  "${trivy_workspace_args[@]}" \
-  "$trivy_image" image \
-  --cache-dir /tmp/trivy-cache \
-  --scanners vuln \
-  --ignore-unfixed \
-  "${trivy_ignore_args[@]}" \
-  --severity CRITICAL \
+  --severity HIGH,CRITICAL \
   --exit-code 1 \
   "$image_ref"
 

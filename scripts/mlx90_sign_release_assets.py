@@ -79,8 +79,8 @@ MAX_INSTALLED_TREE_BYTES = 512 * 1024 * 1024
 MAX_SBOM_CANONICAL_ASSIGNMENTS = 720
 MAX_SBOM_CANONICAL_WORK_BYTES = 256 * 1024 * 1024
 TRIVY_IMAGES = {
-    "docker.io/aquasec/trivy:0.73.0@sha256:4bbf3824d974b70f27631005e2e6194d4d8fbd6e72c4a9e04cf521e25c5cb07f",
-    "docker.io/aquasec/trivy:0.73.0@sha256:3c135a0270fe7f19a677eabb3f7eca95c96ae78b52b81697de736670fc6e66c8",
+    "docker.io/aquasec/trivy:0.74.0@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9",
+    "docker.io/aquasec/trivy:0.74.0@sha256:55ad20f8a239a3e95427e60b8aaea38788550c18a3f1772976bebf732e6ae166",
 }
 FILE_PROVENANCE_SUBJECTS = {
     f"assurance-{profile}.json" for profile in PROFILES
@@ -1247,7 +1247,7 @@ def reauthenticate_profile(
                 "--pids-limit",
                 "256",
                 "--tmpfs",
-                "/tmp:rw,noexec,nosuid,nodev,size=4g",
+                "/tmp:rw,noexec,nosuid,nodev,size=8g",
                 trivy_image,
                 "image",
                 "--cache-dir",
@@ -1256,7 +1256,7 @@ def reauthenticate_profile(
                 "vuln",
                 "--ignore-unfixed",
                 "--severity",
-                "CRITICAL",
+                "HIGH,CRITICAL",
                 "--exit-code",
                 "1",
                 platform_reference,
@@ -1278,7 +1278,7 @@ def reauthenticate_profile(
                 "--pids-limit",
                 "256",
                 "--tmpfs",
-                "/tmp:rw,noexec,nosuid,nodev,size=4g",
+                "/tmp:rw,noexec,nosuid,nodev,size=8g",
                 trivy_image,
                 "image",
                 "--cache-dir",
@@ -1439,7 +1439,7 @@ def validate_generic(
         "security_scan": "trivy-completed",
         "trivy_status": "passed",
         "trivy_gate": "passed-before-quay-publish",
-        "trivy_severity": "CRITICAL",
+        "trivy_severity": "HIGH,CRITICAL",
         "trivy_report": f"{release_base}/sbom.cdx.json",
         "sbom": f"{release_base}/sbom.cdx.json",
         "provenance": f"{release_base}/release-provenance.intoto.jsonl",
@@ -1527,7 +1527,7 @@ def validate_generic(
         "security_scan_status": "trivy-completed",
         "trivy_status": "passed",
         "trivy_gate": "passed-before-quay-publish",
-        "trivy_severity": "CRITICAL",
+        "trivy_severity": "HIGH,CRITICAL",
         "trivy_report": f"{release_base}/sbom.cdx.json",
     }:
         fail("generic security record is invalid")
