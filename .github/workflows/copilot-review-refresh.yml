@@ -1,0 +1,1043 @@
+# Managed by lightning-it/shared-assets-lit.
+# Do not edit downstream copies directly.
+# yamllint disable rule:truthy rule:line-length
+---
+name: Refresh Copilot review gate
+run-name: >-
+  REP-60 protected review refresh PR #${{ inputs.pr_number }}
+  review ${{ inputs.review_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request whose delayed review must be recovered
+        required: true
+        type: number
+      expected_base_sha:
+        description: Frozen pull-request base SHA
+        required: true
+        type: string
+      expected_head_sha:
+        description: Frozen pull-request head SHA
+        required: true
+        type: string
+      review_id:
+        description: Exact current-head Copilot review ID
+        required: true
+        type: number
+      evidence_comment_id:
+        description: Optional exact maintainer reply proving resolved findings
+        required: false
+        default: 0
+        type: number
+
+permissions:
+  contents: read
+  # Permission contract for the PR timeline call below:
+  # https://docs.github.com/en/rest/issues/timeline?apiVersion=2022-11-28
+  # GitHub lists Pull requests: read as an independently sufficient set.
+  pull-requests: read
+
+concurrency:
+  group: copilot-review-refresh-${{ github.repository }}-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  refresh-canonical-gate:
+    name: Refresh canonical Copilot review gate
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      contains(fromJSON('["develop","main"]'), github.event.repository.default_branch) &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      github.actor == github.triggering_actor
+    permissions:
+      actions: write
+      checks: read
+      contents: read
+      # The documented timeline permission is Pull requests: read OR Issues:
+      # read. Retain the narrower grant already required by this controller.
+      pull-requests: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Rerun the canonical protected gate when needed
+        env:
+          CONTROLLER_SHA: ${{ github.workflow_sha }}
+          CONTROLLER_REF: ${{ github.workflow_ref }}
+          GH_TOKEN: ${{ github.token }}
+          INPUT_EVIDENCE_COMMENT_ID: ${{ inputs.evidence_comment_id }}
+          INPUT_EXPECTED_BASE_SHA: ${{ inputs.expected_base_sha }}
+          INPUT_EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          INPUT_REVIEW_ID: ${{ inputs.review_id }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REPOSITORY_OWNER}" = lightning-it
+          test "${GITHUB_ACTOR}" = "${GITHUB_TRIGGERING_ACTOR}"
+          BASE_SHA="${INPUT_EXPECTED_BASE_SHA}"
+          HEAD_SHA="${INPUT_EXPECTED_HEAD_SHA}"
+          PR_NUMBER="${INPUT_PR_NUMBER}"
+          REVIEW_ID="${INPUT_REVIEW_ID}"
+          EVIDENCE_COMMENT_ID="${INPUT_EVIDENCE_COMMENT_ID:-0}"
+          [[ "${BASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${REVIEW_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${EVIDENCE_COMMENT_ID}" =~ ^(0|[1-9][0-9]*)$ ]]
+          [[ "${CONTROLLER_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          repository_state="$(gh api "repos/${REPOSITORY}")"
+          default_branch="$(jq -er \
+            '.default_branch | select(. == "develop" or . == "main")' \
+            <<<"${repository_state}")"
+          test "${GITHUB_REF}" = "refs/heads/${default_branch}"
+          test "${CONTROLLER_REF}" = \
+            "${REPOSITORY}/.github/workflows/copilot-review-refresh.yml@refs/heads/${default_branch}"
+          default_state="$(gh api \
+            "repos/${REPOSITORY}/branches/${default_branch}")"
+          default_head="$(jq -er \
+            '.commit.sha | select(type == "string" and test("^[0-9a-f]{40}$"))' \
+            <<<"${default_state}")"
+          jq -e \
+            --arg branch "${default_branch}" \
+            --arg head "${default_head}" '
+              .name == $branch
+              and .protected == true
+              and .commit.sha == $head
+            ' <<<"${default_state}" >/dev/null
+          test "${CONTROLLER_SHA}" = "${default_head}"
+          pr="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          jq -e \
+            --arg base "${BASE_SHA}" \
+            --arg head "${HEAD_SHA}" \
+            --arg repository "${REPOSITORY}" '
+              .state == "open"
+              and .draft == false
+              and .base.sha == $base
+              and .head.sha == $head
+              and .base.repo.full_name == $repository
+              and (.head.repo.full_name | type == "string" and length > 0)
+              and (.base.ref == "develop" or .base.ref == "main")
+              and (.head.ref | type == "string" and length > 0)
+              and (.user.login | type == "string" and length > 0)
+              and (.labels | type) == "array"
+              and all(.labels[];
+                type == "object" and (.name | type) == "string")
+            ' <<<"${pr}" >/dev/null
+          PR_AUTHOR="$(jq -er .user.login <<<"${pr}")"
+          PR_BASE_REF="$(jq -er .base.ref <<<"${pr}")"
+          PR_HEAD_REF="$(jq -er .head.ref <<<"${pr}")"
+          PR_HEAD_REPOSITORY="$(jq -er \
+            '.head.repo.full_name | select(type == "string" and length > 0)' \
+            <<<"${pr}")"
+          [[ "${PR_BASE_REF}" =~ ^(develop|main)$ ]]
+          if [ "${PR_AUTHOR}" = 'lightning-it-release-automation[bot]' ]; then
+            echo "Release-App PRs use only the protected Exact-Revision Codex path."
+            exit 0
+          fi
+          labels_sha256_from_pr() {
+            local labels_json pr_json="$1"
+            if ! jq -e \
+              --arg base "${BASE_SHA}" \
+              --arg base_ref "${PR_BASE_REF}" \
+              --arg head "${HEAD_SHA}" \
+              --arg head_repository "${PR_HEAD_REPOSITORY}" \
+              --arg repository "${REPOSITORY}" '
+                .state == "open"
+                and .draft == false
+                and .base.ref == $base_ref
+                and .base.sha == $base
+                and .head.sha == $head
+                and .base.repo.full_name == $repository
+                and .head.repo.full_name == $head_repository
+                and (.labels | type) == "array"
+                and all(.labels[];
+                  type == "object" and (.name | type) == "string")
+              ' <<<"${pr_json}" >/dev/null; then
+              return 1
+            fi
+            labels_json="$(jq -cer '[.labels[].name] | sort' <<<"${pr_json}")" || return 1
+            printf '%s' "${labels_json}" | sha256sum | cut -d ' ' -f 1
+          }
+          read_metadata_revision() {
+            local owner="${REPOSITORY%%/*}" repository="${REPOSITORY#*/}"
+            local query response
+            read -r -d '' query <<'GRAPHQL' || true
+          query($owner: String!, $repository: String!, $number: Int!) {
+            repository(owner: $owner, name: $repository) {
+              pullRequest(number: $number) { number lastEditedAt }
+            }
+          }
+          GRAPHQL
+            response="$(gh api graphql \
+              -f query="${query}" \
+              -F owner="${owner}" \
+              -F repository="${repository}" \
+              -F number="${PR_NUMBER}")"
+            jq -er \
+              --argjson number "${PR_NUMBER}" '
+                select(((.errors // []) | length) == 0)
+                | select(.data.repository.pullRequest.number == $number)
+                | .data.repository.pullRequest.lastEditedAt
+                | if . == null then "null"
+                  elif type == "string"
+                    and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
+                  then . else error("malformed lastEditedAt") end
+              ' <<<"${response}"
+          }
+          PR_LABELS_SHA256="$(labels_sha256_from_pr "${pr}")"
+          [[ "${PR_LABELS_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          PR_LAST_EDITED_AT="$(read_metadata_revision)"
+          runs_url="repos/${REPOSITORY}/actions/runs"
+          has_live_write_permission() {
+            local actor="$1"
+            local actor_permission
+            if ! [[ "${actor}" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
+              return 1
+            fi
+            if ! actor_permission="$(gh api \
+              "repos/${REPOSITORY}/collaborators/${actor}/permission")"; then
+              return 1
+            fi
+            if ! jq -e \
+              --arg actor "${actor}" '
+                (.permission | type == "string")
+                and (.role_name | type == "string" and length > 0)
+                and (.user.login | type == "string" and length > 0)
+                and .user.type == "User"
+                and (.user.permissions.push | type == "boolean")
+                and ((.user.login | ascii_downcase) == ($actor | ascii_downcase))
+                and .user.permissions.push == true
+                and (.permission == "write"
+                  or .permission == "maintain"
+                  or .permission == "admin")
+              ' <<<"${actor_permission}" >/dev/null; then
+              return 1
+            fi
+            return 0
+          }
+          require_failed_required_workflow() {
+            local failed_reservation failed_reservation_id failed_reservation_pages
+            local required_job
+            local required_jobs_pages required_run required_run_attempt
+            local required_run_id required_runs required_runs_pages
+            required_runs_pages="$(gh api --paginate --slurp \
+              "${runs_url}?event=pull_request_target&head_sha=${HEAD_SHA}&per_page=100")"
+            # Live run 33655265312 attempt 2 proves GitHub preserves the PR
+            # author in actor and sets triggering_actor to github-actions[bot]
+            # when the protected helper reruns the failed verifier job.
+            required_runs="$(jq -c \
+              --arg api_url "${GITHUB_API_URL}" \
+              --arg author "${PR_AUTHOR}" \
+              --arg head "${HEAD_SHA}" \
+              --arg head_ref "${PR_HEAD_REF}" \
+              --arg head_repository "${PR_HEAD_REPOSITORY}" \
+              --arg prefix "Protected current revision PR #${PR_NUMBER} " \
+              --arg repository "${REPOSITORY}" \
+              --arg suffix " ${HEAD_SHA}" '
+                [.[].workflow_runs[]? |
+                  select(.event == "pull_request_target") |
+                  select(.path == ".github/workflows/supplementary-current-revision-required.yml") |
+                  select((.workflow_id | type) == "number" and .workflow_id > 0) |
+                  select(.workflow_url == ($api_url + "/repos/" + $repository
+                    + "/actions/required_workflows/" + (.workflow_id | tostring))) |
+                  select(.repository.full_name == $repository) |
+                  select(.head_repository.full_name == $head_repository) |
+                  select(.head_branch == $head_ref and .head_sha == $head) |
+                  select(.actor.login == $author) |
+                  select((.run_attempt == 1
+                      and .triggering_actor.login == $author)
+                    or (.run_attempt > 1
+                      and .triggering_actor.login == "github-actions[bot]")) |
+                  select((.pull_requests | length) == 0) |
+                  select(.name == .display_title) |
+                  select(.name == ($prefix + "opened" + $suffix)
+                    or .name == ($prefix + "synchronize" + $suffix)
+                    or .name == ($prefix + "reopened" + $suffix)
+                    or .name == ($prefix + "ready_for_review" + $suffix)
+                    or .name == ($prefix + "edited" + $suffix))]
+                | sort_by(.run_number) | reverse
+              ' <<<"${required_runs_pages}")"
+            test "$(jq 'length' <<<"${required_runs}")" -gt 0
+            required_run="$(jq -c '.[0]' <<<"${required_runs}")"
+            jq -e '
+              (.run_attempt | type) == "number"
+              and .run_attempt > 0
+              and .status == "completed"
+              and .conclusion == "failure"
+            ' <<<"${required_run}" >/dev/null
+            required_run_id="$(jq -er \
+              '.id | select(type == "number" and . > 0)' \
+              <<<"${required_run}")"
+            required_run_attempt="$(jq -er \
+              '.run_attempt | select(type == "number" and . > 0)' \
+              <<<"${required_run}")"
+            test "$(jq -r .html_url <<<"${required_run}")" = \
+              "${GITHUB_SERVER_URL}/${REPOSITORY}/actions/runs/${required_run_id}"
+            required_jobs_pages="$(gh api --paginate --slurp \
+              "repos/${REPOSITORY}/actions/runs/${required_run_id}/attempts/${required_run_attempt}/jobs?filter=all&per_page=100")"
+            required_job="$(jq -c \
+              --arg head "${HEAD_SHA}" \
+              --argjson run_attempt "${required_run_attempt}" '
+              [.[].jobs[]? |
+                select(.name == "Required current-revision workflow") |
+                select(.head_sha == $head and .run_attempt == $run_attempt) |
+                select(.status == "completed" and .conclusion == "failure") |
+                select((.runner_name | type) == "string"
+                  and (.runner_name | length) > 0)]
+            ' <<<"${required_jobs_pages}")"
+            test "$(jq 'length' <<<"${required_job}")" -eq 1
+            failed_reservation="$(jq -c \
+              --arg head "${HEAD_SHA}" \
+              --argjson run_attempt "${required_run_attempt}" '
+              [.[].jobs[]? |
+                select(.name == "Protected current-revision verifier") |
+                select(.head_sha == $head and .run_attempt == $run_attempt) |
+                select(.status == "completed" and .conclusion == "failure")]
+            ' <<<"${required_jobs_pages}")"
+            test "$(jq 'length' <<<"${failed_reservation}")" -eq 1
+            failed_reservation_id="$(jq -er \
+              '.[0].id | select(type == "number" and . > 0)' \
+              <<<"${failed_reservation}")"
+            failed_reservation_pages="$(gh api --paginate --slurp \
+              "repos/${REPOSITORY}/commits/${HEAD_SHA}/check-runs?check_name=Protected%20current-revision%20verifier&filter=all&per_page=100")"
+            failed_reservation="$(jq -c \
+              --argjson check_id "${failed_reservation_id}" '
+                [.[].check_runs[]? | select(.id == $check_id)]
+              ' <<<"${failed_reservation_pages}")"
+            test "$(jq 'length' <<<"${failed_reservation}")" -eq 1
+            failed_reservation="$(jq -c '.[0]' <<<"${failed_reservation}")"
+            jq -e \
+              --arg base "${BASE_SHA}" \
+              --arg head "${HEAD_SHA}" \
+              --arg repository "${REPOSITORY}" \
+              --arg server_url "${GITHUB_SERVER_URL}" \
+              --argjson check_id "${failed_reservation_id}" \
+              --argjson pr "${PR_NUMBER}" \
+              --argjson run_id "${required_run_id}" '
+                .id == $check_id
+                and .name == "Protected current-revision verifier"
+                and .app.id == 15368 and .app.slug == "github-actions"
+                and .head_sha == $head
+                and .details_url == ($server_url + "/" + $repository
+                  + "/runs/" + ($check_id | tostring))
+                and .external_id == ("rep60-required-workflow:v3:"
+                  + ($run_id | tostring) + ":" + ($pr | tostring) + ":"
+                  + $base + ":" + $head)
+                and .status == "completed" and .conclusion == "failure"
+              ' <<<"${failed_reservation}" >/dev/null
+          }
+
+          neutral_pages="$(gh api --paginate --slurp \
+            "repos/${REPOSITORY}/commits/${HEAD_SHA}/check-runs?check_name=Current%20revision%20review&filter=all&per_page=100")"
+          neutral="$(jq -c --arg head "${HEAD_SHA}" '
+            [.[].check_runs[]? |
+              select(.name == "Current revision review") |
+              select(.app.id == 15368 and .app.slug == "github-actions") |
+              select(.head_sha == $head)]
+          ' <<<"${neutral_pages}")"
+          neutral_count="$(jq 'length' <<<"${neutral}")"
+          if [ "${neutral_count}" -gt 1 ]; then
+            echo "Multiple protected Current revision review checks exist for ${HEAD_SHA}." >&2
+            require_failed_required_workflow
+            exit 1
+          fi
+          if [ "${neutral_count}" -eq 1 ]; then
+            check_id="$(jq -er '.[0].id | select(type == "number" and . > 0)' <<<"${neutral}")"
+            check_url="${GITHUB_SERVER_URL}/${REPOSITORY}/runs/${check_id}"
+            validate_neutral_producer() {
+              local external_id evidence_version kind producer producer_id
+              local producer_jobs producer_jobs_pages producer_run_attempt producer_url
+              local review_id review_pages
+              external_id="$(jq -er '.[0].external_id | select(type == "string")' <<<"${neutral}")"
+              producer_id="$(jq -er '.[0].output.summary | fromjson | .producer_run_id | select(type == "number" and . > 0)' <<<"${neutral}")"
+              producer_url="$(jq -er '.[0].output.summary | fromjson | .run_url | select(type == "string" and length > 0)' <<<"${neutral}")"
+              if [[ "${external_id}" =~ ^mlx90-current-revision:(copilot|managed-sync|ancestry-backmerge):v6:${PR_NUMBER}:([1-9][0-9]*):${BASE_SHA}:${HEAD_SHA}$ ]]; then
+                evidence_version=v6
+                kind="${BASH_REMATCH[1]}"
+                test "${BASH_REMATCH[2]}" = "${producer_id}"
+              elif [[ "${external_id}" =~ ^mlx90-current-revision:(copilot|ancestry-backmerge):v5:([1-9][0-9]*):${BASE_SHA}:${HEAD_SHA}$ ]]; then
+                evidence_version=v5
+                kind="${BASH_REMATCH[1]}"
+                test "${BASH_REMATCH[2]}" = "${producer_id}"
+              else
+                return 1
+              fi
+              if [ "${evidence_version}" = v6 ]; then
+                summary_controller_sha="$(jq -er \
+                  '.[0].output.summary | fromjson | .controller_sha
+                    | select(type == "string" and test("^[0-9a-f]{40}$"))' \
+                  <<<"${neutral}")" || return 1
+                summary_controller_ref="$(jq -er \
+                  '.[0].output.summary | fromjson | .controller_ref
+                    | select(type == "string" and length > 0)' \
+                  <<<"${neutral}")" || return 1
+                test "${summary_controller_ref}" = "${default_branch}" \
+                  || return 1
+                summary_controller_ancestry="$(gh api \
+                  "repos/${REPOSITORY}/compare/${summary_controller_sha}...${default_head}")" \
+                  || return 1
+                jq -e \
+                  --arg controller "${summary_controller_sha}" '
+                    .status == "identical"
+                    or (.status == "ahead"
+                      and .behind_by == 0
+                      and .merge_base_commit.sha == $controller)
+                  ' <<<"${summary_controller_ancestry}" >/dev/null \
+                  || return 1
+              fi
+              test "${producer_url}" = "${GITHUB_SERVER_URL}/${REPOSITORY}/actions/runs/${producer_id}"
+              producer="$(gh api "repos/${REPOSITORY}/actions/runs/${producer_id}")" || return 1
+              jq -e \
+                --arg base_ref "${PR_BASE_REF}" \
+                --arg base_sha "${BASE_SHA}" \
+                --arg head_ref "${PR_HEAD_REF}" \
+                --arg head_repository "${PR_HEAD_REPOSITORY}" \
+                --arg head_sha "${HEAD_SHA}" \
+                --arg repository "${REPOSITORY}" \
+                --arg url "${producer_url}" \
+                --argjson pr "${PR_NUMBER}" '
+                  .event == "pull_request_target"
+                  and .path == ".github/workflows/copilot-review.yml"
+                  and .name == "Current revision review gate"
+                  and .repository.full_name == $repository
+                  and .head_repository.full_name == $head_repository
+                  and .head_branch == $head_ref and .head_sha == $head_sha
+                  and .html_url == $url and .status == "completed"
+                  and .conclusion == "success"
+                  and (.run_attempt | type) == "number"
+                  and .run_attempt >= 1 and .run_attempt <= 2
+                  and (.pull_requests | length) == 1
+                  and .pull_requests[0].number == $pr
+                  and .pull_requests[0].base.ref == $base_ref
+                  and .pull_requests[0].base.sha == $base_sha
+                  and .pull_requests[0].head.ref == $head_ref
+                  and .pull_requests[0].head.sha == $head_sha
+                ' <<<"${producer}" >/dev/null || return 1
+              producer_run_attempt="$(jq -er '.run_attempt | select(type == "number")' <<<"${producer}")"
+              producer_jobs_pages="$(gh api --paginate --slurp \
+                "repos/${REPOSITORY}/actions/runs/${producer_id}/jobs?filter=all&per_page=100")" || return 1
+              producer_jobs="$(jq -c --argjson attempt "${producer_run_attempt}" '
+                [.[].jobs[]? | select(.name == "Verify current revision policy") |
+                  select(.run_attempt == $attempt and .status == "completed"
+                    and .conclusion == "success")]
+              ' <<<"${producer_jobs_pages}")" || return 1
+              test "$(jq 'length' <<<"${producer_jobs}")" -eq 1
+              test "$(jq '[.[0].steps[]? | select(.name == "Publish bound neutral result"
+                and .conclusion == "success")] | length' <<<"${producer_jobs}")" -eq 1
+              if [ "${kind}" = copilot ]; then
+                review_pages="$(gh api --paginate --slurp \
+                  "repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews?per_page=100")" || return 1
+                if [ "${evidence_version}" = v6 ]; then
+                  review_id="$(jq -er '.[0].output.summary | fromjson | .review_id | select(type == "string" and length > 0)' <<<"${neutral}")" || return 1
+                  jq -e --arg head "${HEAD_SHA}" --arg review_id "${review_id}" '
+                    [add[]? | select(.node_id == $review_id)] as $reviews |
+                    ($reviews | length) == 1 and $reviews[0].commit_id == $head
+                    and ($reviews[0].user.login == "copilot-pull-request-reviewer"
+                      or $reviews[0].user.login == "copilot-pull-request-reviewer[bot]")
+                    and ($reviews[0].state == "COMMENTED" or $reviews[0].state == "APPROVED")
+                  ' <<<"${review_pages}" >/dev/null || return 1
+                else
+                  jq -e --arg head "${HEAD_SHA}" '
+                    [add[]? | select(.commit_id == $head) |
+                      select(.user.login == "copilot-pull-request-reviewer"
+                        or .user.login == "copilot-pull-request-reviewer[bot]")] as $reviews |
+                    ($reviews | length) == 1
+                    and ($reviews[0].state == "COMMENTED" or $reviews[0].state == "APPROVED")
+                  ' <<<"${review_pages}" >/dev/null || return 1
+                fi
+              fi
+            }
+            # Managed distribution has its own evidence kind. The sync App may
+            # never satisfy the Copilot branch, and inside lightning-it/.github
+            # it is accepted only as ancestry-backmerge.
+            if ! jq -e \
+              --arg author "${PR_AUTHOR}" \
+              --arg base "${BASE_SHA}" \
+              --arg head "${HEAD_SHA}" \
+              --arg head_repository "${PR_HEAD_REPOSITORY}" \
+              --arg labels_sha256 "${PR_LABELS_SHA256}" \
+              --arg last_edited_at "${PR_LAST_EDITED_AT}" \
+              --arg controller_ref "${default_branch}" \
+              --arg pr "${PR_NUMBER}" \
+              --arg base_ref "${PR_BASE_REF}" \
+              --arg repository "${REPOSITORY}" \
+              --argjson pr_number "${PR_NUMBER}" \
+              --arg url "${check_url}" '
+                .[0] as $check
+                | ($check.output.summary | fromjson) as $summary
+                | $check.status == "completed"
+                and $check.conclusion == "success"
+                and $check.details_url == $url
+                and $summary.schema == 4
+                and $summary.base_sha == $base
+                and $summary.head_sha == $head
+                and (
+                  (
+                    (
+                      (($author != "lightning-it-release-automation[bot]"
+                        and $author != "lightning-it-shared-assets-sync[bot]")
+                        and ($check.external_id |
+                          test("^mlx90-current-revision:copilot:v6:" + $pr
+                            + ":[1-9][0-9]*:" + $base + ":" + $head + "$")))
+                      or
+                      (($author == "lightning-it-shared-assets-sync[bot]"
+                        and $repository != "lightning-it/.github"
+                        and $base_ref == "develop")
+                        and $summary.review_path
+                          == "deterministic provenance-bound managed distribution exemption"
+                        and ($check.external_id |
+                          test("^mlx90-current-revision:managed-sync:v6:" + $pr
+                            + ":[1-9][0-9]*:" + $base + ":" + $head + "$")))
+                      or
+                      (($repository == "lightning-it/.github"
+                        and $author == "lightning-it-shared-assets-sync[bot]"
+                        and $base_ref == "develop")
+                        and $summary.review_path
+                          == "deterministic evidence-bound ancestry exemption"
+                        and ($check.external_id |
+                          test("^mlx90-current-revision:ancestry-backmerge:v6:"
+                            + $pr + ":[1-9][0-9]*:" + $base + ":" + $head + "$")))
+                    )
+                    and $summary.pull_request_number == $pr_number
+                    and $summary.head_repository == $head_repository
+                    and ($summary.controller_sha | test("^[0-9a-f]{40}$"))
+                    and $summary.controller_ref == $controller_ref
+                    and $summary.pull_request_labels_sha256 == $labels_sha256
+                    and ($summary | has("pull_request_last_edited_at"))
+                    and $summary.pull_request_last_edited_at == (
+                      if $last_edited_at == "null" then null else $last_edited_at end)
+                  )
+                  or
+                  (
+                    (
+                      (($author != "lightning-it-release-automation[bot]"
+                        and $author != "lightning-it-shared-assets-sync[bot]")
+                        and ($check.external_id |
+                          test("^mlx90-current-revision:copilot:v5:[1-9][0-9]*:"
+                            + $base + ":" + $head + "$")))
+                      or
+                      (($repository == "lightning-it/.github"
+                        and $author == "lightning-it-shared-assets-sync[bot]")
+                        and ($check.external_id |
+                          test("^mlx90-current-revision:ancestry-backmerge:v5:"
+                            + "[1-9][0-9]*:" + $base + ":" + $head + "$")))
+                    )
+                    and $summary.pull_request_number == $pr_number
+                  )
+                )
+              ' <<<"${neutral}" >/dev/null \
+              || ! validate_neutral_producer; then
+              echo "Existing neutral result is stale or malformed; canonical rerun required."
+              require_failed_required_workflow
+              neutral_count=0
+            fi
+
+          fi
+          if [ "${neutral_count}" -eq 1 ]; then
+            read -r owner name <<<"${REPOSITORY//\// }"
+            # shellcheck disable=SC2016  # GraphQL variables must stay literal.
+            query='query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:100){pageInfo{hasNextPage} nodes{author{login} pullRequestReview{commit{oid}}}}}}}}}'
+            threads='[]'
+            after=''
+            while true; do
+              args=(-f query="${query}" -F owner="${owner}" -F name="${name}" -F number="${PR_NUMBER}")
+              if [ -n "${after}" ]; then args+=(-f after="${after}"); fi
+              page="$(gh api graphql "${args[@]}")"
+              page_threads="$(jq '.data.repository.pullRequest.reviewThreads.nodes' <<<"${page}")"
+              threads="$(jq -c --argjson page "${page_threads}" '. + $page' <<<"${threads}")"
+              if [ "$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' <<<"${page}")" != true ]; then break; fi
+              after="$(jq -r '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty' <<<"${page}")"
+              test -n "${after}"
+            done
+            incomplete="$(jq '[.[] |
+              select(.isResolved == false) |
+              select(.comments.pageInfo.hasNextPage == true)] | length' <<<"${threads}")"
+            if [ "${incomplete}" -gt 0 ]; then
+              echo "Unresolved review-thread comments exceed the verified page; refusing to preserve PASS." >&2
+              require_failed_required_workflow
+              exit 1
+            fi
+            unresolved="$(jq --arg head "${HEAD_SHA}" '[.[] |
+              select(.isResolved == false) |
+              select(any(.comments.nodes[];
+                (.author.login == "copilot-pull-request-reviewer"
+                  or .author.login == "copilot-pull-request-reviewer[bot]")
+                and .pullRequestReview.commit.oid == $head))] | length' <<<"${threads}")"
+            if [ "${unresolved}" -gt 0 ]; then
+              echo "Current-head Copilot findings invalidate the neutral PASS." >&2
+              require_failed_required_workflow
+              exit 1
+            fi
+            current_pr="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+            test "$(labels_sha256_from_pr "${current_pr}")" = "${PR_LABELS_SHA256}"
+            test "$(read_metadata_revision)" = "${PR_LAST_EDITED_AT}"
+            echo "The exact current-head neutral PASS remains valid; no rerun is needed."
+            exit 0
+          fi
+
+          rerun_reason=''
+          trigger_occurred_at=''
+          EVIDENCE_COMMENT_AUTHOR=''
+          if [ "${EVIDENCE_COMMENT_ID}" -gt 0 ]; then
+            # A protected dispatch may cite one immutable maintainer reply after
+            # the bounded verifier exhausted its resolution wait. The reply,
+            # parent finding, review, complete thread set, base and head are
+            # all re-read before the verifier-only rerun.
+            if ! has_live_write_permission "${GITHUB_ACTOR}"; then
+              echo "Dispatch actor lacks current write permission." >&2
+              exit 1
+            fi
+            comment="$(gh api \
+              "repos/${REPOSITORY}/pulls/comments/${EVIDENCE_COMMENT_ID}")"
+            EVIDENCE_COMMENT_CREATED_AT="$(jq -er \
+              '.created_at | select(type == "string" and length > 0)' \
+              <<<"${comment}")"
+            EVIDENCE_COMMENT_AUTHOR="$(jq -er \
+              '.user.login | select(type == "string" and length > 0)' \
+              <<<"${comment}")"
+            jq -e \
+              --arg comment_author "${EVIDENCE_COMMENT_AUTHOR}" \
+              --arg created_at "${EVIDENCE_COMMENT_CREATED_AT}" \
+              --argjson comment_id "${EVIDENCE_COMMENT_ID}" '
+                .id == $comment_id
+                and .user.login == $comment_author
+                and .user.type == "User"
+                and .created_at == $created_at
+                and .updated_at == $created_at
+                and (.commit_id | type == "string"
+                  and test("^[0-9a-f]{40}$"))
+                and has("in_reply_to_id")
+              ' <<<"${comment}" >/dev/null
+            if ! has_live_write_permission "${EVIDENCE_COMMENT_AUTHOR}"; then
+              echo "Evidence reply author lacks current write permission; no rerun is authorized."
+              exit 0
+            fi
+            if ! jq -e \
+                --arg head "${HEAD_SHA}" '
+                  .commit_id == $head
+                  and (.in_reply_to_id | type == "number" and . > 0)
+                ' <<<"${comment}" >/dev/null; then
+              echo "Review comment is not an exact current-head evidence reply; no rerun is authorized."
+              exit 0
+            fi
+            parent_id="$(jq -er \
+              '.in_reply_to_id | select(type == "number" and . > 0)' \
+              <<<"${comment}")"
+            parent="$(gh api \
+              "repos/${REPOSITORY}/pulls/comments/${parent_id}")"
+            jq -e \
+              --argjson parent_id "${parent_id}" '
+                .id == $parent_id
+                and (.user.login | type == "string" and length > 0)
+                and (.user.type | type == "string" and length > 0)
+                and (.commit_id | type == "string"
+                  and test("^[0-9a-f]{40}$"))
+                and (.path | type == "string" and length > 0)
+                and (.pull_request_review_id | type == "number" and . > 0)
+              ' <<<"${parent}" >/dev/null
+            if ! jq -e \
+                --arg head "${HEAD_SHA}" \
+                --arg path "$(jq -r .path <<<"${comment}")" '
+                  (.user.login == "Copilot"
+                    or .user.login == "copilot-pull-request-reviewer"
+                    or .user.login == "copilot-pull-request-reviewer[bot]")
+                  and .user.type == "Bot"
+                  and .commit_id == $head
+                  and .path == $path
+                ' <<<"${parent}" >/dev/null; then
+              echo "Review reply does not target an exact current-head Copilot finding; no rerun is authorized."
+              exit 0
+            fi
+            PARENT_REVIEW_ID="$(jq -er \
+              '.pull_request_review_id | select(type == "number" and . > 0)' \
+              <<<"${parent}")"
+            test "${PARENT_REVIEW_ID}" = "${REVIEW_ID}"
+
+            read -r owner name <<<"${REPOSITORY//\// }"
+            # shellcheck disable=SC2016  # GraphQL variables stay literal.
+            resolved_query='query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:100){pageInfo{hasNextPage} nodes{databaseId author{login} pullRequestReview{databaseId commit{oid}}}}}}}}}'
+            threads='[]'
+            after=''
+            while true; do
+              arguments=(-f query="${resolved_query}" -F owner="${owner}" \
+                -F name="${name}" -F number="${PR_NUMBER}")
+              if [ -n "${after}" ]; then arguments+=(-f after="${after}"); fi
+              page="$(gh api graphql "${arguments[@]}")"
+              jq -e --arg head "${HEAD_SHA}" \
+                '.data.repository.pullRequest.headRefOid == $head' \
+                <<<"${page}" >/dev/null
+              page_threads="$(jq \
+                '.data.repository.pullRequest.reviewThreads.nodes' \
+                <<<"${page}")"
+              threads="$(jq -c --argjson page "${page_threads}" \
+                '. + $page' <<<"${threads}")"
+              if [ "$(jq -r \
+                  '.data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage' \
+                  <<<"${page}")" != true ]; then
+                break
+              fi
+              after="$(jq -r \
+                '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor // empty' \
+                <<<"${page}")"
+              test -n "${after}"
+            done
+            jq -e 'all(.[]; .comments.pageInfo.hasNextPage == false)' \
+              <<<"${threads}" >/dev/null
+            if ! jq -e \
+              --arg head "${HEAD_SHA}" \
+              --argjson parent_id "${parent_id}" \
+              --argjson review_id "${REVIEW_ID}" '
+                ([.[] | select(any(.comments.nodes[];
+                  .databaseId == $parent_id
+                  and (.author.login == "Copilot"
+                    or .author.login == "copilot-pull-request-reviewer"
+                    or .author.login == "copilot-pull-request-reviewer[bot]")
+                  and .pullRequestReview.databaseId == $review_id
+                  and .pullRequestReview.commit.oid == $head))] | length) == 1
+                and ([.[] | select(any(.comments.nodes[];
+                  .databaseId == $parent_id)) | select(.isResolved == true)]
+                  | length) == 1
+                and ([.[] | select(.isResolved == false) |
+                  select(any(.comments.nodes[];
+                    (.author.login == "copilot-pull-request-reviewer"
+                      or .author.login == "copilot-pull-request-reviewer[bot]")
+                    and .pullRequestReview.commit.oid == $head))] | length) == 0
+              ' <<<"${threads}" >/dev/null; then
+              echo "Resolved-thread evidence is incomplete or non-authorizing; no rerun is authorized."
+              exit 0
+            fi
+            rerun_reason=resolved-finding
+            trigger_occurred_at="${EVIDENCE_COMMENT_CREATED_AT}"
+          else
+            if ! has_live_write_permission "${GITHUB_ACTOR}"; then
+              echo "Dispatch actor lacks current write permission." >&2
+              exit 1
+            fi
+            rerun_reason=manual-delayed-review
+          fi
+
+          # A missing neutral result may be recovered only from one exact
+          # delayed review or one resolved-finding evidence reply. Both paths
+          # reuse the original review and rerun only the verifier job.
+          test "${PR_AUTHOR}" != 'lightning-it-release-automation[bot]'
+          test "${PR_AUTHOR}" != 'lightning-it-shared-assets-sync[bot]'
+          [[ "${CONTROLLER_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${REVIEW_ID}" =~ ^[1-9][0-9]*$ ]]
+
+          review_pages="$(gh api --paginate --slurp \
+            "repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews?per_page=100")"
+          current_head_reviews="$(jq -c --arg head "${HEAD_SHA}" '
+            [add[]? |
+              select(.commit_id == $head) |
+              select(.user.login == "copilot-pull-request-reviewer"
+                or .user.login == "copilot-pull-request-reviewer[bot]")]
+          ' <<<"${review_pages}")"
+          test "$(jq 'length' <<<"${current_head_reviews}")" -eq 1
+          test "$(jq -er '.[0].id' <<<"${current_head_reviews}")" = "${REVIEW_ID}"
+          review="$(gh api \
+            "repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews/${REVIEW_ID}")"
+          REVIEW_COMMIT_SHA="$(jq -er \
+            '.commit_id | select(type == "string" and test("^[0-9a-f]{40}$"))' \
+            <<<"${review}")"
+          REVIEW_SUBMITTED_AT="$(jq -er \
+            '.submitted_at | select(type == "string" and length > 0)' \
+            <<<"${review}")"
+          test "${REVIEW_COMMIT_SHA}" = "${HEAD_SHA}"
+          jq -e \
+            --arg head "${HEAD_SHA}" \
+            --arg submitted "${REVIEW_SUBMITTED_AT}" \
+            --argjson review_id "${REVIEW_ID}" '
+              .id == $review_id
+              and .user.login == "copilot-pull-request-reviewer[bot]"
+              and .user.type == "Bot"
+              and .commit_id == $head
+              and (.state == "COMMENTED" or .state == "APPROVED")
+              and .submitted_at == $submitted
+              and ((.body // "") | ascii_downcase |
+                (contains("unable to review this pull request") | not)
+                and (contains("premium request quota") | not)
+                and (contains("premium requests quota") | not)
+                and (contains("encountered an error") | not)
+                and (contains("suppressed comment") | not))
+            ' <<<"${review}" >/dev/null
+          if [ "${rerun_reason}" = manual-delayed-review ]; then
+            # Bind the ordering check and published evidence to the timestamp
+            # re-read from the authoritative Reviews API, not the event copy.
+            trigger_occurred_at="${REVIEW_SUBMITTED_AT}"
+          fi
+          test -n "${trigger_occurred_at}"
+          remediation_run_id=0
+          remediation_marker_created_at=''
+          scope_marker="<!-- rep60-copilot-rereview-scope/v2 repository=${REPOSITORY} pr=${PR_NUMBER} head=${HEAD_SHA} -->"
+          issue_comments="$(gh api --paginate --slurp \
+            "repos/${REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100")"
+          marker_comments="$(jq -c \
+            --arg issue_url "${GITHUB_API_URL}/repos/${REPOSITORY}/issues/${PR_NUMBER}" \
+            --arg scope "${scope_marker}" '
+              [add[]? |
+                select(.user.login == "github-actions[bot]"
+                  and .user.type == "Bot") |
+                select(.issue_url == $issue_url) |
+                select(.created_at == .updated_at) |
+                select((.body | split("\n"))[0] == $scope)]
+            ' <<<"${issue_comments}")"
+          marker_count="$(jq 'length' <<<"${marker_comments}")"
+          test "${marker_count}" -le 1
+          if [ "${marker_count}" -eq 1 ]; then
+            test "${PR_AUTHOR}" = litroc
+            marker_comment="$(jq -c '.[0]' <<<"${marker_comments}")"
+            marker_body="$(jq -er .body <<<"${marker_comment}")"
+            remediation_marker_created_at="$(jq -er .created_at \
+              <<<"${marker_comment}")"
+            evidence_pattern="^<!-- rep60-copilot-rereview-evidence/v2 repository=${REPOSITORY} pr=${PR_NUMBER} base_ref=${PR_BASE_REF} base=${BASE_SHA} head=${HEAD_SHA} run=(?<run>[1-9][0-9]*) controller=(?<controller>[0-9a-f]{40}) round=1 state=consumed -->$"
+            marker_evidence="$(jq -er \
+              --arg pattern "${evidence_pattern}" \
+              --arg scope "${scope_marker}" '
+                (split("\n")) as $lines
+                | select(($lines | length) == 2 and $lines[0] == $scope)
+                | $lines[1] | capture($pattern)
+              ' <<<"${marker_body}")"
+            remediation_run_id="$(jq -er '.run | tonumber | select(. > 0)' \
+              <<<"${marker_evidence}")"
+            remediation_controller="$(jq -er .controller \
+              <<<"${marker_evidence}")"
+            test "${remediation_controller}" = "${BASE_SHA}"
+            remediation_run="$(gh api \
+              "repos/${REPOSITORY}/actions/runs/${remediation_run_id}")"
+            expected_remediation_title="REP-60 Copilot rereview PR #${PR_NUMBER} head ${HEAD_SHA} round 1"
+            jq -e \
+              --arg actor "${PR_AUTHOR}" \
+              --arg branch "${PR_BASE_REF}" \
+              --arg controller "${remediation_controller}" \
+              --arg repository "${REPOSITORY}" \
+              --arg title "${expected_remediation_title}" \
+              --argjson run_id "${remediation_run_id}" '
+                .id == $run_id
+                and .event == "workflow_dispatch"
+                and .path == ".github/workflows/codex-copilot-remediation.yml"
+                # GitHub keeps the workflow name static while workflow_dispatch
+                # supplies the immutable per-run display title.
+                and .name == "Codex Copilot remediation"
+                and .display_title == $title
+                and .head_branch == $branch
+                and .head_sha == $controller
+                and .repository.full_name == $repository
+                and (.pull_requests | length) == 0
+                and .run_attempt == 1
+                and .status == "completed"
+                and .conclusion == "success"
+                and .actor.login == $actor
+                and .triggering_actor.login == $actor
+              ' <<<"${remediation_run}" >/dev/null
+            remediation_created_at="$(jq -er .created_at \
+              <<<"${remediation_run}")"
+            remediation_updated_at="$(jq -er .updated_at \
+              <<<"${remediation_run}")"
+            test "$(date -u -d "${remediation_marker_created_at}" +%s)" -ge \
+              "$(date -u -d "${remediation_created_at}" +%s)"
+            test "$(date -u -d "${remediation_marker_created_at}" +%s)" -le \
+              "$(date -u -d "${remediation_updated_at}" +%s)"
+            test "$(date -u -d "${REVIEW_SUBMITTED_AT}" +%s)" -ge \
+              "$(date -u -d "${remediation_marker_created_at}" +%s)"
+            remediation_jobs="$(gh api --paginate --slurp \
+              "repos/${REPOSITORY}/actions/runs/${remediation_run_id}/attempts/1/jobs?filter=all&per_page=100")"
+            jq -e --arg controller "${remediation_controller}" '
+              [.[].jobs[]? |
+                select(.name == "continue-after-push") |
+                select(.run_attempt == 1 and .head_sha == $controller) |
+                select(.status == "completed" and .conclusion == "success") |
+                select((.runner_name | type) == "string"
+                  and (.runner_name | length) > 0)]
+              | length == 1
+            ' <<<"${remediation_jobs}" >/dev/null
+          fi
+
+          for attempt in $(seq 1 10); do
+            response="$(gh api "${runs_url}?event=pull_request_target&head_sha=${HEAD_SHA}&per_page=100")"
+            run="$(
+              jq -c --arg head_sha "${HEAD_SHA}" --argjson pr "${PR_NUMBER}" '
+                [
+                  .workflow_runs[]?
+                  | select(.head_sha == $head_sha)
+                  | select(.path == ".github/workflows/copilot-review.yml")
+                  | select(any(.pull_requests[]?; .number == $pr))
+                ]
+                | sort_by(.run_number)
+                | reverse
+                | .[0] // empty
+              ' <<<"${response}"
+            )"
+
+            if [ -n "${run}" ]; then
+              producer_run_id="$(jq -er '.id | select(type == "number" and . > 0)' <<<"${run}")"
+              status="$(jq -er '.status | select(type == "string" and length > 0)' <<<"${run}")"
+              if [ "${status}" != completed ]; then
+                echo "Canonical Copilot gate ${producer_run_id} is ${status}; its polling loop will observe the review event."
+                exit 0
+              fi
+              jq -e \
+                --arg author "${PR_AUTHOR}" \
+                --arg base_ref "${PR_BASE_REF}" \
+                --arg base_sha "${BASE_SHA}" \
+                --arg head "${HEAD_SHA}" \
+                --arg head_ref "${PR_HEAD_REF}" \
+                --arg head_repository "${PR_HEAD_REPOSITORY}" \
+                --arg repository "${REPOSITORY}" \
+                --argjson pr "${PR_NUMBER}" '
+                  .event == "pull_request_target"
+                  and .run_attempt == 1
+                  and .status == "completed"
+                  and .conclusion == "failure"
+                  and .path == ".github/workflows/copilot-review.yml"
+                  and .name == "Current revision review gate"
+                  and .head_sha == $head
+                  and .head_branch == $head_ref
+                  and .repository.full_name == $repository
+                  and .head_repository.full_name == $head_repository
+                  and (.pull_requests | length) == 1
+                  and .pull_requests[0].number == $pr
+                  and .pull_requests[0].base.ref == $base_ref
+                  and .pull_requests[0].base.sha == $base_sha
+                  and .pull_requests[0].head.ref == $head_ref
+                  and .pull_requests[0].head.sha == $head
+                  and .actor.login == $author
+                  and .triggering_actor.login == $author
+                ' <<<"${run}" >/dev/null
+              break
+            fi
+
+            echo "Canonical gate not visible yet (attempt ${attempt}/10)."
+            sleep 6
+          done
+
+          test -n "${producer_run_id:-}"
+          attempt_one_jobs="$(gh api --paginate --slurp \
+            "repos/${REPOSITORY}/actions/runs/${producer_run_id}/attempts/1/jobs?filter=all&per_page=100")"
+          request_jobs="$(jq -c '
+            [.[].jobs[]? |
+              select(.name == "Request Copilot review for current revision") |
+              select(.run_attempt == 1 and .status == "completed")]
+          ' <<<"${attempt_one_jobs}")"
+          test "$(jq 'length' <<<"${request_jobs}")" -eq 1
+          request_conclusion="$(jq -er \
+            '.[0].conclusion | select(. == "success" or . == "skipped")' \
+            <<<"${request_jobs}")"
+          verifier_jobs="$(jq -c '
+            [.[].jobs[]? |
+              select(.name == "Verify current revision policy") |
+              select(.run_attempt == 1 and .status == "completed"
+                and .conclusion == "failure")]
+          ' <<<"${attempt_one_jobs}")"
+          test "$(jq 'length' <<<"${verifier_jobs}")" -eq 1
+          verifier_job_id="$(jq -er '.[0].id | select(type == "number" and . > 0)' \
+            <<<"${verifier_jobs}")"
+          first_verifier_completed_at="$(jq -er \
+            '.[0].completed_at | select(type == "string" and length > 0)' \
+            <<<"${verifier_jobs}")"
+          test "$(date -u -d "${trigger_occurred_at}" +%s)" -gt \
+            "$(date -u -d "${first_verifier_completed_at}" +%s)"
+
+          # GitHub documents Pull requests: read as one of the alternative
+          # permission sets for this PR timeline endpoint. Do not broaden the
+          # job to Issues: read; the existing least-privilege grant is enough.
+          # Live proof: run 32605566329 completed this API call with the job
+          # token and failed later at the independent provenance predicate.
+          timeline="$(gh api --paginate --slurp \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${REPOSITORY}/issues/${PR_NUMBER}/timeline?per_page=100")"
+          producer_created_at="$(jq -er \
+            '.created_at | select(type == "string" and length > 0)' <<<"${run}")"
+          request_window_start="${producer_created_at}"
+          request_provenance_run_id="${producer_run_id}"
+          if [ "${request_conclusion}" = success ]; then
+            test "${remediation_run_id}" -eq 0
+            expected_request_actor='github-actions[bot]'
+          elif [ "${PR_AUTHOR}" != litroc ]; then
+            test "${remediation_run_id}" -eq 0
+            expected_request_actor="${PR_AUTHOR}"
+          else
+            test "${remediation_run_id}" -gt 0
+            test -n "${remediation_marker_created_at}"
+            expected_request_actor='github-actions[bot]'
+            request_window_start="${remediation_marker_created_at}"
+            request_provenance_run_id="${remediation_run_id}"
+            rerun_reason=correction-rereview
+          fi
+          jq -e \
+            --arg actor "${expected_request_actor}" \
+            --arg request_window_start "${request_window_start}" \
+            --arg review_submitted_at "${REVIEW_SUBMITTED_AT}" '
+              [add[]? |
+                select(.event == "review_requested") |
+                select(.actor.login == $actor) |
+                select(.requested_reviewer.login == "Copilot") |
+                select(.created_at >= $request_window_start) |
+                select(.created_at <= $review_submitted_at)]
+              | length == 1
+            ' <<<"${timeline}" >/dev/null
+
+          # This controller has only Checks: read. It must never create,
+          # update, rename, invalidate, or complete a check. The protected
+          # workflow-dispatch run and its immutable step summary are the audit
+          # record; the sole state mutation below is the exact failed verifier
+          # job rerun.
+          current_pr="$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}")"
+          test "$(labels_sha256_from_pr "${current_pr}")" = "${PR_LABELS_SHA256}"
+          test "$(read_metadata_revision)" = "${PR_LAST_EDITED_AT}"
+          current_default="$(gh api \
+            "repos/${REPOSITORY}/branches/${default_branch}")"
+          jq -e --arg head "${CONTROLLER_SHA}" '
+            .protected == true and .commit.sha == $head
+          ' <<<"${current_default}" >/dev/null
+          current_review="$(gh api \
+            "repos/${REPOSITORY}/pulls/${PR_NUMBER}/reviews/${REVIEW_ID}")"
+          test "$(jq -er .commit_id <<<"${current_review}")" = "${HEAD_SHA}"
+          test "$(jq -er .submitted_at <<<"${current_review}")" = \
+            "${REVIEW_SUBMITTED_AT}"
+          if [ "${EVIDENCE_COMMENT_ID}" -gt 0 ] \
+            && ! has_live_write_permission "${EVIDENCE_COMMENT_AUTHOR}"; then
+            echo "Evidence reply author lost current write permission before verifier rerun." >&2
+            exit 1
+          fi
+          if ! has_live_write_permission "${GITHUB_ACTOR}"; then
+            echo "Dispatch actor lost current write permission before verifier rerun." >&2
+            exit 1
+          fi
+          gh api --method POST \
+            "repos/${REPOSITORY}/actions/jobs/${verifier_job_id}/rerun" >/dev/null
+          rerun_observed=false
+          # GitHub can acknowledge the job rerun before the incremented run
+          # attempt becomes visible through the Actions API. Observe for at
+          # most 60 seconds, then remain fail-closed.
+          for attempt in $(seq 1 30); do
+            producer_after="$(gh api \
+              "repos/${REPOSITORY}/actions/runs/${producer_run_id}")"
+            if jq -e '
+                .run_attempt == 2
+                and (.status == "queued"
+                  or .status == "in_progress"
+                  or .status == "completed")
+              ' <<<"${producer_after}" >/dev/null; then
+              rerun_observed=true
+              break
+            fi
+            sleep 2
+          done
+          test "${rerun_observed}" = true
+          {
+            echo '### Protected verifier-only re-evaluation'
+            echo
+            echo "- PR: ${PR_NUMBER}"
+            echo "- Base: ${BASE_SHA}"
+            echo "- Head: ${HEAD_SHA}"
+            echo "- Review: ${REVIEW_ID}"
+            echo "- Producer run: ${producer_run_id}"
+            echo "- Request provenance run: ${request_provenance_run_id}"
+            echo "- Reason: ${rerun_reason}"
+            echo "- Mutation: verifier job ${verifier_job_id} rerun only"
+            echo '- AI request: none'
+            echo '- Check mutation: none'
+          } >>"${GITHUB_STEP_SUMMARY}"
