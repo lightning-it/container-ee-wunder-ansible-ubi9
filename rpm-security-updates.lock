@@ -2,10 +2,10 @@
 # The Docker build selects only names already present in the pinned base image.
 acl 0:2.4.0-1.el9_8
 curl-minimal 0:7.76.1-40.el9_8.5
-expat 0:2.5.0-6.el9_8.1
-expat-devel 0:2.5.0-6.el9_8.1
-glib2 0:2.68.4-19.el9_8.9
-glib2-devel 0:2.68.4-19.el9_8.9
+expat 0:2.5.0-6.el9_8.3
+expat-devel 0:2.5.0-6.el9_8.3
+glib2 0:2.68.4-19.el9_8.10
+glib2-devel 0:2.68.4-19.el9_8.10
 httpd 0:2.4.62-13.el9_8.6
 httpd-core 0:2.4.62-13.el9_8.6
 httpd-devel 0:2.4.62-13.el9_8.6
