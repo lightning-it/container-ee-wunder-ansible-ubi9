@@ -7,7 +7,7 @@
 # ---------------------------------------------------------------------------
 # Core runtime (pin to 2.18.x series)
 # ---------------------------------------------------------------------------
-ansible-core==2.18.19
+ansible-core==2.21.4
 ansible-runner==2.4.3
 
 # ---------------------------------------------------------------------------
@@ -19,7 +19,7 @@ hvac==2.4.0
 # VMware Python SDK required by community.vmware modules
 # (pyVim import comes from pyvmomi)
 # ---------------------------------------------------------------------------
-pyvmomi==9.1.0.0
+pyvmomi==9.1.1.0
 
 # ---------------------------------------------------------------------------
 # HTTP/TLS stack (helps avoid runtime surprises in minimal images)
@@ -29,7 +29,7 @@ pyvmomi==9.1.0.0
 # - certifi: CA bundle consistency in containers
 # ---------------------------------------------------------------------------
 requests==2.34.2
-urllib3==2.7.0
+urllib3==2.8.0
 aiohttp==3.14.3
 cryptography==50.0.1
 certifi==2026.7.22
