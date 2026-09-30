@@ -444,12 +444,12 @@ jobs:
             '["lightning-it/ansible-collection-supplementary"]'
 
       - name: Set up QEMU (multi-arch)
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8  # v4
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a  # v4
         with:
           image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:465d3fdd28d0f2b871ba4b4ec98bd183292e96167f00d9fd40bd249f8632d705
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4
         with:
           driver-opts: image=docker.io/moby/buildkit:buildx-stable-1@sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528
 
@@ -1619,7 +1619,7 @@ jobs:
           path: sarif
 
       - name: Upload Trivy public release gate SARIF
-        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd  # v4.37.7
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63  # v4.38.0
         with:
           sarif_file: sarif/trivy-public-release-gate.sarif
           category: trivy-public
@@ -1631,7 +1631,7 @@ jobs:
           path: sarif
 
       - name: Upload Trivy certified release gate SARIF
-        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd  # v4.37.7
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63  # v4.38.0
         with:
           sarif_file: sarif/trivy-certified-release-gate.sarif
           category: trivy-certified
@@ -1643,7 +1643,7 @@ jobs:
           path: sarif
 
       - name: Upload Trivy bootstrap release gate SARIF
-        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd  # v4.37.7
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63  # v4.38.0
         with:
           sarif_file: sarif/trivy-bootstrap-release-gate.sarif
           category: trivy-bootstrap
@@ -2483,7 +2483,7 @@ jobs:
 
       - name: Set up Buildx for post-release stable promotion
         if: needs.build.outputs.security_release != 'true'
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e  # v4
         with:
           driver-opts: image=docker.io/moby/buildkit:buildx-stable-1@sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528
 
