@@ -12,7 +12,7 @@ ARG TERRAGRUNT_COMMIT=54c43a44c62c3171c0279951cf44877af1a2ecb3
 ARG HELM_VERSION=3.21.4
 ARG HELM_COMMIT=813176c51bb5c181dbbd7901298ddcc104cd3417
 ARG HELM_ORAS_VERSION=2.6.2
-ARG TERRAGRUNT_X_MOD_VERSION=0.41.0
+ARG TERRAGRUNT_X_MOD_VERSION=0.40.0
 
 COPY scripts/build-patched-go-tools.sh /usr/local/bin/build-patched-go-tools
 RUN chmod 0755 /usr/local/bin/build-patched-go-tools && \
