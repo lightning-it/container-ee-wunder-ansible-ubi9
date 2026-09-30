@@ -125,8 +125,17 @@
   evidence outside that native GitHub history.
 - Only the protected `develop` to `main` promotion creates exactly one durable,
   complete release-evidence package. It binds the full integrated promotion
-  diff, base, head, merge base, integration tree, policy, reviewer result, and
-  all release and audit checks.
+  diff, base, head, merge base, integration tree, policy, the exact native
+  acceptance evidence of every post-baseline ingress PR, and all release and
+  audit checks. It MUST NOT request a second AI review of the cumulative
+  promotion diff or apply the per-review-unit byte limit to that cumulative
+  diff; the limit remains mandatory for each new ingress review unit.
+- After a Release-App `release/vX.Y.Z` merge to `main`, its protected
+  release-published back-sync is the sole owner of `main` to `develop`
+  convergence. The generic ancestry synchronizer MUST detect that exact
+  Release-App source and exit without creating a competing PR. This single
+  ownership rule prevents base drift, conflicting duplicate back-syncs, and
+  human successor branches.
 - Agents, workflows, and repository-local rules MUST NOT duplicate that durable
   evidence per `develop` pull request or invoke local AI to create evidence.
   Repository-local rules may only make this lifecycle stricter.
@@ -169,6 +178,14 @@
   require an actual Copilot review of the current head. Only explicitly
   allowlisted Renovate and shared-assets changes may use a documented
   deterministic, evidence-bound exception; unknown bots fail closed.
+- The existing Renovate exception is valid only for the exact
+  `renovate[bot]` author, a same-repository `renovate/*` head, protected
+  `develop` base, all three `renovate`, `dependencies`, and `safe-automerge`
+  labels, no `breaking-update` label, and a null AI review ID. Its producer
+  publishes only the bound deterministic result and exits; the independent
+  Required Workflow verifies that completed producer directly and MUST NOT be
+  raced by a producer-authored rerun. No other Renovate or dependency exception
+  exists.
 - Automated GitHub Copilot requests funded by Lightning IT are restricted to
   pull requests whose exact author login is `litroc`. Every other human or
   external contributor must supply a valid current-head review under their own
@@ -176,8 +193,11 @@
   or funds it. Personal tokens and personal provider keys never enter Actions.
 - Every exact same-repository PR authored by
   `lightning-it-release-automation[bot]` uses only the ADR-defined, protected
-  MLX-90 §7.2 Exact-Revision Codex review. No deterministic release exemption
-  and no GitHub Copilot fallback is permitted. The review binds the live base,
+  MLX-90 §7.2 Exact-Revision Codex review, except for an exact, exhaustively
+  verified ancestry-only `main` to `develop` backmerge. That one REP-60 case
+  uses the deterministic evidence-bound zero-AI exception and never dispatches
+  Codex or Copilot. No other deterministic release exemption and no GitHub
+  Copilot fallback is permitted. The §7.2 review binds the live base,
   head, unique merge base, integration tree, and SHA-256 of the complete binary
   Git-object diff. It MUST run from the protected base copy of
   `.github/workflows/release-bot-exact-head-review.yml`, receive no checkout,
@@ -186,6 +206,14 @@
   review`. The built-in `:read-only` permission profile technically denies
   writes and command network access. This path never applies to human,
   community, or other automation authors.
+- A protected Exact-Revision bootstrap is one dependency-closed trust surface.
+  It MUST install `.github/workflows/copilot-review.yml`,
+  `.github/workflows/release-bot-exact-head-review.yml`,
+  `.github/workflows/current-revision-rerun.yml`,
+  `scripts/materialize-exact-revision-review.py`,
+  `.github/codex/prompts/review-exact-head.md`, and
+  `.github/codex/schemas/exact-head-review.schema.json` byte-identically and
+  atomically. A partial bootstrap fails closed.
 - Reusable `pull_request_target` re-evaluation binds its executed controller
   SHA and ref to the live protected default branch, even when the PR base is
   different; PR base and head remain separately exact. A `workflow_run`
@@ -199,6 +227,23 @@
   is the only automatic guarded-finalizer re-entry after slower native checks
   finish. Other events never dispatch it; it never requests AI or mutates a
   check, and missing or duplicate handoff evidence fails closed.
+- A first immutable main trust-root bootstrap whose organization Required
+  Workflow attempt one failed before creating a verifier reservation may use
+  the protected default-branch refresh with `review_id=0` only after the
+  external verifier advanced. It requires the exact same-repository `litroc`
+  PR targeting `main`, the canonical title/head-ref, no current-head Copilot
+  review or request marker, no reservation, and the exact first-attempt run
+  whose sole runner-backed failure is bootstrap classification. It may rerun
+  only that job once, must observe attempt two as `github-actions[bot]`, and
+  never requests AI or mutates a check. The ordinary controller still owns
+  the one final Pipeline-Copilot request and result.
+- After the controller publishes one exact neutral PASS, the protected rerun
+  helper discovers exactly one organization Required Workflow run through its
+  non-local `actions/required_workflows` URL and complete PR/base/head/repo
+  binding. That lookup is never PASS evidence. A reservation is optional only
+  if attempt one ended before publishing it; if present, it must identify the
+  same run. Only the one failed verifier job may be rerun once, and attempt two
+  must execute the full ordinary verification before it can pass.
 - A deterministic ancestry-backmerge retry MUST exhaustively read the open and
   closed pull-request history for its exact repository-owned branch, base and
   head before it creates a pull request. Any closed exact match, unexpected
@@ -261,13 +306,53 @@
   pull-through `scripts/devtools-container-ci.sh` from its repository-specific
   override. Make those changes in `shared-assets-lit` first; never hand-edit
   the downstream managed copies.
-- When any managed container repository's installed push-ready engine differs
-  from the protected canonical engine, the shared-assets App first opens a
-  policy-only bootstrap containing exactly the engine, `.lit/push-ready.json`,
-  this `AGENTS.md`, and the rebound Copilot instructions. A later protected source
-  run performs the full runtime sync only after the bootstrap is part of the
-  target base; the two phases must never be collapsed past the 200,000-byte
-  fail-closed review limit.
+- When any managed container repository's installed push-ready engine or
+  `.github/workflows/current-revision-rerun.yml` differs from the protected
+  canonical blob, the shared-assets App first opens a policy-only bootstrap
+  containing exactly the engine, `.lit/push-ready.json`, this `AGENTS.md`, the
+  rebound Copilot instructions, and the exact protected-rerun helper. A later
+  protected source run performs the full runtime sync only after the bootstrap
+  is part of the target base; a newer full-sync head must never depend on its
+  own unmerged helper, and the two phases must never be collapsed past the
+  200,000-byte fail-closed review limit.
+- The Ansible container has one narrower pre-policy recovery phase for an
+  externally aged UBI security lock. Whenever its canonical
+  `rpm-security-updates.lock` differs while the controller would otherwise
+  perform either a policy bootstrap or a full sync, the Shared-Assets App
+  first delivers the exact dependency-closed pair of the canonical lock and
+  `container-build.yml` in a normal protected PR.
+  The workflow triggers the native build for lock changes. The controller
+  binds all source and target Git blobs, rejects symlinked or non-regular
+  destinations and every
+  additional path, and retains the native image build and HIGH/CRITICAL Trivy
+  gates. After that merge it resumes the previously classified mode: genuine
+  engine divergence still requires policy bootstrap before full sync, while
+  only the separately proven immutable-image-repin exception may resume
+  directly with full sync. This phase applies only to
+  `container-ee-wunder-ansible-ubi9` and grants no other exception.
+- A protected container bootstrap source run remains bound to its exact source
+  SHA, run and first attempt until its exact App-authored target PR has merged
+  normally. It then dispatches exactly one continuation for that same source
+  SHA and only that target repository. The continuation re-proves the protected
+  source branch, parent source run and matrix job, target PR, original base and
+  head, two-parent merge commit, GitHub-Actions actor, and first-attempt status
+  before any target mutation. Runtime-lock bootstrap may continue to policy
+  bootstrap, and policy bootstrap may continue to the full sync; a full sync
+  never dispatches another continuation. Any timeout, drift, duplicate,
+  rerun, partial input set, or unmerged/closed PR fails closed.
+  `actions: write` is forbidden at workflow scope and is allowed only on the
+  isolated post-sync continuation job; that job receives target read access
+  only and never holds the target-mutating App token used by the sync job.
+  The continuation job evaluates under `always()` with the protected `main`
+  guard so an unrelated failed matrix leg cannot strand another leg's
+  successfully created bootstrap PR; a missing or invalid per-target handoff
+  still fails that continuation leg closed.
+  An empty continuation envelope is valid only on the protected `push` event;
+  `workflow_dispatch` must provide the complete verified continuation binding
+  before any target-mutating App token is minted.
+  A continuation first mints only target `contents: read` and
+  `pull-requests: read`, verifies the exact source run and protected target
+  merge, and only then may mint the separate target-mutating sync token.
 - `container-ee-wunder-ansible-ubi9` receives its MLX-90 chain only from the
   repository-specific override. Its repo-specific `.releaserc` is a read-only
   version-and-notes plan: the release App persists the draft before it creates
