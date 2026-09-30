@@ -125,8 +125,17 @@
   evidence outside that native GitHub history.
 - Only the protected `develop` to `main` promotion creates exactly one durable,
   complete release-evidence package. It binds the full integrated promotion
-  diff, base, head, merge base, integration tree, policy, reviewer result, and
-  all release and audit checks.
+  diff, base, head, merge base, integration tree, policy, the exact native
+  acceptance evidence of every post-baseline ingress PR, and all release and
+  audit checks. It MUST NOT request a second AI review of the cumulative
+  promotion diff or apply the per-review-unit byte limit to that cumulative
+  diff; the limit remains mandatory for each new ingress review unit.
+- After a Release-App `release/vX.Y.Z` merge to `main`, its protected
+  release-published back-sync is the sole owner of `main` to `develop`
+  convergence. The generic ancestry synchronizer MUST detect that exact
+  Release-App source and exit without creating a competing PR. This single
+  ownership rule prevents base drift, conflicting duplicate back-syncs, and
+  human successor branches.
 - Agents, workflows, and repository-local rules MUST NOT duplicate that durable
   evidence per `develop` pull request or invoke local AI to create evidence.
   Repository-local rules may only make this lifecycle stricter.
@@ -297,13 +306,15 @@
   pull-through `scripts/devtools-container-ci.sh` from its repository-specific
   override. Make those changes in `shared-assets-lit` first; never hand-edit
   the downstream managed copies.
-- When any managed container repository's installed push-ready engine differs
-  from the protected canonical engine, the shared-assets App first opens a
-  policy-only bootstrap containing exactly the engine, `.lit/push-ready.json`,
-  this `AGENTS.md`, and the rebound Copilot instructions. A later protected source
-  run performs the full runtime sync only after the bootstrap is part of the
-  target base; the two phases must never be collapsed past the 200,000-byte
-  fail-closed review limit.
+- When any managed container repository's installed push-ready engine or
+  `.github/workflows/current-revision-rerun.yml` differs from the protected
+  canonical blob, the shared-assets App first opens a policy-only bootstrap
+  containing exactly the engine, `.lit/push-ready.json`, this `AGENTS.md`, the
+  rebound Copilot instructions, and the exact protected-rerun helper. A later
+  protected source run performs the full runtime sync only after the bootstrap
+  is part of the target base; a newer full-sync head must never depend on its
+  own unmerged helper, and the two phases must never be collapsed past the
+  200,000-byte fail-closed review limit.
 - The Ansible container has one narrower pre-policy recovery phase for an
   externally aged UBI security lock. Whenever its canonical
   `rpm-security-updates.lock` differs while the controller would otherwise
