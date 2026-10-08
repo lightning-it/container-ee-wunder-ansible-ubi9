@@ -20,6 +20,6 @@ collections:
   - name: community.vmware
     version: "5.10.0"
   - name: containers.podman
-    version: "1.20.2"
+    version: "1.21.1"
   - name: fedora.linux_system_roles
     version: "1.127.3"
